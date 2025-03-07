@@ -111,18 +111,31 @@ class FileSuggest extends require$$0$1.EditorSuggest {
         // 获取所有markdown文件
         const files = this.app.vault.getMarkdownFiles();
         
-        // 过滤并排序匹配的文件
+        // 简化搜索逻辑，确保基本功能正常工作
         return files
             .filter(file => {
+                // 如果查询为空，返回所有文件
+                if (!query) return true;
+                
                 const fileName = file.basename.toLowerCase();
-                return fileName.includes(query);
+                const filePath = file.path.toLowerCase();
+                
+                // 简单包含匹配
+                return fileName.includes(query.toLowerCase()) || filePath.includes(query.toLowerCase());
             })
             .sort((a, b) => {
-                // 优先显示以查询开头的文件
+                // 如果查询为空，按最近修改时间排序
+                if (!query) {
+                    return b.stat.mtime - a.stat.mtime;
+                }
+                
                 const aName = a.basename.toLowerCase();
                 const bName = b.basename.toLowerCase();
-                const aStartsWith = aName.startsWith(query);
-                const bStartsWith = bName.startsWith(query);
+                const query_lower = query.toLowerCase();
+                
+                // 优先显示以查询开头的文件
+                const aStartsWith = aName.startsWith(query_lower);
+                const bStartsWith = bName.startsWith(query_lower);
                 
                 if (aStartsWith && !bStartsWith) return -1;
                 if (!aStartsWith && bStartsWith) return 1;
@@ -130,19 +143,34 @@ class FileSuggest extends require$$0$1.EditorSuggest {
                 // 然后按字母顺序排序
                 return aName.localeCompare(bName);
             })
-            .slice(0, 10) // 限制结果数量
+            .slice(0, 50) // 限制结果数量
             .map(file => ({
                 label: file.basename,
-                file: file
+                file: file,
+                path: file.path
             }));
     }
 
     renderSuggestion(suggestion, el) {
         el.setText(suggestion.label);
-        el.createSpan({
-            cls: "suggestion-note",
-            text: " (File/文件)"
-        });
+        
+        // 添加文件路径作为提示
+        if (suggestion.path) {
+            // 显示相对路径，不包括文件名本身
+            const pathParts = suggestion.path.split('/');
+            pathParts.pop(); // 移除文件名
+            const pathText = pathParts.join('/');
+            
+            el.createSpan({
+                cls: "suggestion-note",
+                text: pathText ? ` (${pathText})` : " (文件)"
+            });
+        } else {
+            el.createSpan({
+                cls: "suggestion-note",
+                text: " (文件)"
+            });
+        }
     }
     
     selectSuggestion(suggestion, event) {
@@ -156,30 +184,44 @@ class FileSuggest extends require$$0$1.EditorSuggest {
     }
     
     onTrigger(cursor, editor, file) {
-        var _a;
         if (!this.plugin.settings.isAutosuggestEnabled) {
             return null;
         }
+        
         const triggerPhrase = this.plugin.settings.autocompleteTriggerPhrase;
-        const startPos = ((_a = this.context) === null || _a === void 0 ? void 0 : _a.start) || {
+        
+        // 获取当前行的文本
+        const line = editor.getLine(cursor.line);
+        
+        // 查找当前行中最后一个触发符号的位置
+        const lastTriggerIndex = line.lastIndexOf(triggerPhrase, cursor.ch);
+        
+        // 如果没有找到触发符号或者触发符号在光标之后，则不触发
+        if (lastTriggerIndex === -1 || lastTriggerIndex >= cursor.ch) {
+            return null;
+        }
+        
+        // 检查触发符号前面的字符，确保不是字母、数字或反引号
+        if (lastTriggerIndex > 0) {
+            const precedingChar = line.charAt(lastTriggerIndex - 1);
+            if (/[a-zA-Z0-9`]/.test(precedingChar)) {
+                return null;
+            }
+        }
+        
+        // 设置开始位置为触发符号的位置
+        const startPos = {
             line: cursor.line,
-            ch: cursor.ch - triggerPhrase.length,
+            ch: lastTriggerIndex
         };
-        if (!editor.getRange(startPos, cursor).startsWith(triggerPhrase)) {
-            return null;
-        }
-        const precedingChar = editor.getRange({
-            line: startPos.line,
-            ch: startPos.ch - 1,
-        }, startPos);
-        // Short-circuit if `@` as a part of a word (e.g. part of an email address)
-        if (precedingChar && /[`a-zA-Z0-9]/.test(precedingChar)) {
-            return null;
-        }
+        
+        // 获取查询文本（触发符号后面的文本）
+        const query = line.substring(lastTriggerIndex + triggerPhrase.length, cursor.ch);
+        
         return {
             start: startPos,
             end: cursor,
-            query: editor.getRange(startPos, cursor).substring(triggerPhrase.length),
+            query: query
         };
     }
 }
