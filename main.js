@@ -16,19 +16,34 @@ function __awaiter(thisArg, _arguments, P, generator) {
     });
 }
 
-// 生成Markdown链接
-function generateMarkdownLink(app, subpath, alias) {
-    const useMarkdownLinks = app.vault.getConfig("useMarkdownLinks");
+// 修改后的 generateMarkdownLink 函数：现在接收 file 对象和 plugin 实例
+function generateMarkdownLink(app, file, alias, plugin) {
+    // 获取文件相对路径，移除 .md 后缀
+    let filePath = file.path;
+    if (filePath.endsWith('.md')) {
+        filePath = filePath.substring(0, filePath.length - 3);
+    }
+    // 使用文件的 basename 作为显示名称
+    const fileName = file.basename;
     
-    // 移除 .md 后缀
-    let displayPath = subpath;
-    if (displayPath.endsWith('.md')) {
-        displayPath = displayPath.substring(0, displayPath.length - 3);
+    // 添加调试日志，观察 Advanced URI 插件状态
+    console.log("Advanced URI integration setting:", plugin.settings.enableAdvancedUri);
+    console.log("App plugins:", Object.keys(app.plugins.plugins));
+    console.log("Advanced URI plugin:", app.plugins.plugins["obsidian-advanced-uri"]);
+    
+    // 如果在设置中打开了 Advanced URI 集成，并且插件存在，则生成 Advanced URI 格式链接
+    if (plugin.settings.enableAdvancedUri && app.plugins.plugins["obsidian-advanced-uri"]) {
+        const vaultName = app.vault.getName();
+        const advancedUri = `obsidian://advanced-uri?vault=${encodeURIComponent(vaultName)}&filepath=${encodeURIComponent(filePath)}`;
+        if (alias) {
+            return `[${alias}](${advancedUri})`;
+        } else {
+            return `[${fileName}](${advancedUri})`;
+        }
     }
     
-    // 移除相对路径，只保留文件名
-    const fileName = displayPath.split('/').pop();
-    
+    // 如果未启用 Advanced URI，则使用原有逻辑生成链接
+    const useMarkdownLinks = app.vault.getConfig("useMarkdownLinks");
     if (useMarkdownLinks) {
         if (alias) {
             return `[${alias}](${fileName})`;
@@ -43,14 +58,16 @@ function generateMarkdownLink(app, subpath, alias) {
         }
     }
 }
-
 // 默认设置
 const DEFAULT_SETTINGS = {
     autocompleteTriggerPhrase: "@",
-    isAutosuggestEnabled: true
+    isAutosuggestEnabled: true,
+    excludeFolders: [],
+    // 新增：Advanced URI 集成开关，默认关闭
+    enableAdvancedUri: false
 };
 
-// 设置选项卡
+// 设置选项卡，新增 Advanced URI 集成设置
 class SettingsTab extends require$$0$1.PluginSettingTab {
     constructor(app, plugin) {
         super(app, plugin);
@@ -85,6 +102,31 @@ class SettingsTab extends require$$0$1.PluginSettingTab {
                     this.plugin.settings.autocompleteTriggerPhrase = value.trim();
                     yield this.plugin.saveSettings();
                 })));
+        
+        new require$$0$1.Setting(containerEl)
+            .setName("Exclude folders / 排除文件夹")
+            .setDesc("Folders to exclude from search (one per line) / 搜索时排除的文件夹（每行一个）")
+            .addTextArea((text) => text
+                .setPlaceholder("folder1\nfolder2/subfolder")
+                .setValue(this.plugin.settings.excludeFolders ? this.plugin.settings.excludeFolders.join("\n") : "")
+                .onChange((value) => __awaiter(this, void 0, void 0, function* () {
+                    this.plugin.settings.excludeFolders = value
+                        .split("\n")
+                        .map(folder => folder.trim())
+                        .filter(folder => folder.length > 0);
+                    yield this.plugin.saveSettings();
+                })));
+                
+        // 新增：Advanced URI 集成开关设置
+        new require$$0$1.Setting(containerEl)
+            .setName("Enable Advanced URI integration / 启用 Advanced URI 集成")
+            .setDesc("If installed, new links will be generated in Advanced URI format / 如果安装了 Advanced URI 插件，新建链接将使用其格式")
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.enableAdvancedUri)
+                .onChange((value) => __awaiter(this, void 0, void 0, function* () {
+                    this.plugin.settings.enableAdvancedUri = value;
+                    yield this.plugin.saveSettings();
+                })));
     }
 }
 
@@ -103,47 +145,38 @@ class FileSuggest extends require$$0$1.EditorSuggest {
     }
     
     getSuggestions(context) {
-        // 获取文件建议
         return this.getFileSuggestions(context.query.toLowerCase());
     }
     
     getFileSuggestions(query) {
-        // 获取所有markdown文件
         const files = this.app.vault.getMarkdownFiles();
-        
-        // 简化搜索逻辑，确保基本功能正常工作
+        const excludeFolders = this.plugin.settings.excludeFolders || [];
         return files
             .filter(file => {
-                // 如果查询为空，返回所有文件
+                const isExcluded = excludeFolders.some(folder => {
+                    const folderPath = folder.endsWith('/') ? folder : folder + '/';
+                    return file.path.startsWith(folderPath) || file.path === folder;
+                });
+                if (isExcluded) return false;
                 if (!query) return true;
-                
                 const fileName = file.basename.toLowerCase();
                 const filePath = file.path.toLowerCase();
-                
-                // 简单包含匹配
                 return fileName.includes(query.toLowerCase()) || filePath.includes(query.toLowerCase());
             })
             .sort((a, b) => {
-                // 如果查询为空，按最近修改时间排序
                 if (!query) {
                     return b.stat.mtime - a.stat.mtime;
                 }
-                
                 const aName = a.basename.toLowerCase();
                 const bName = b.basename.toLowerCase();
                 const query_lower = query.toLowerCase();
-                
-                // 优先显示以查询开头的文件
                 const aStartsWith = aName.startsWith(query_lower);
                 const bStartsWith = bName.startsWith(query_lower);
-                
                 if (aStartsWith && !bStartsWith) return -1;
                 if (!aStartsWith && bStartsWith) return 1;
-                
-                // 然后按字母顺序排序
                 return aName.localeCompare(bName);
             })
-            .slice(0, 50) // 限制结果数量
+            .slice(0, 50)
             .map(file => ({
                 label: file.basename,
                 file: file,
@@ -153,14 +186,10 @@ class FileSuggest extends require$$0$1.EditorSuggest {
 
     renderSuggestion(suggestion, el) {
         el.setText(suggestion.label);
-        
-        // 添加文件路径作为提示
         if (suggestion.path) {
-            // 显示相对路径，不包括文件名本身
             const pathParts = suggestion.path.split('/');
-            pathParts.pop(); // 移除文件名
+            pathParts.pop();
             const pathText = pathParts.join('/');
-            
             el.createSpan({
                 cls: "suggestion-note",
                 text: pathText ? ` (${pathText})` : " (文件)"
@@ -176,10 +205,8 @@ class FileSuggest extends require$$0$1.EditorSuggest {
     selectSuggestion(suggestion, event) {
         const { editor } = this.context;
         const includeAlias = event.shiftKey;
-        
-        // 处理文件链接，使用文件名而不是完整路径
-        let fileName = suggestion.file.basename;
-        let linkText = generateMarkdownLink(this.app, fileName, includeAlias ? this.context.query : undefined);
+        // 调用新版 generateMarkdownLink，传入完整文件对象和 plugin 实例
+        let linkText = generateMarkdownLink(this.app, suggestion.file, includeAlias ? this.context.query : undefined, this.plugin);
         editor.replaceRange(linkText, this.context.start, this.context.end);
     }
     
@@ -189,35 +216,22 @@ class FileSuggest extends require$$0$1.EditorSuggest {
         }
         
         const triggerPhrase = this.plugin.settings.autocompleteTriggerPhrase;
-        
-        // 获取当前行的文本
         const line = editor.getLine(cursor.line);
-        
-        // 查找当前行中最后一个触发符号的位置
         const lastTriggerIndex = line.lastIndexOf(triggerPhrase, cursor.ch);
-        
-        // 如果没有找到触发符号或者触发符号在光标之后，则不触发
         if (lastTriggerIndex === -1 || lastTriggerIndex >= cursor.ch) {
             return null;
         }
-        
-        // 检查触发符号前面的字符，确保不是字母、数字或反引号
         if (lastTriggerIndex > 0) {
             const precedingChar = line.charAt(lastTriggerIndex - 1);
             if (/[a-zA-Z0-9`]/.test(precedingChar)) {
                 return null;
             }
         }
-        
-        // 设置开始位置为触发符号的位置
         const startPos = {
             line: cursor.line,
             ch: lastTriggerIndex
         };
-        
-        // 获取查询文本（触发符号后面的文本）
         const query = line.substring(lastTriggerIndex + triggerPhrase.length, cursor.ch);
-        
         return {
             start: startPos,
             end: cursor,
