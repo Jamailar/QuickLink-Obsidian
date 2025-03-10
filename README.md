@@ -187,3 +187,7 @@ Obsidian @Link 是一个轻量级插件，允许你在 Obsidian 笔记中使用 
 
 感谢 @shoudeyunkaijianyueming 的建议
 
+2025年3月10日
+1、修改了对advanced uri插件uid的支持
+2、增加了为所有没有uid的笔记增加uid的功能
+
