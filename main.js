@@ -18,46 +18,86 @@ function __awaiter(thisArg, _arguments, P, generator) {
 
 // 修改后的 generateMarkdownLink 函数：现在接收 file 对象和 plugin 实例
 function generateMarkdownLink(app, file, alias, plugin) {
-    // 获取文件相对路径，移除 .md 后缀
-    let filePath = file.path;
-    if (filePath.endsWith('.md')) {
-        filePath = filePath.substring(0, filePath.length - 3);
-    }
-    // 使用文件的 basename 作为显示名称
-    const fileName = file.basename;
-    
-    // 添加调试日志，观察 Advanced URI 插件状态
-    console.log("Advanced URI integration setting:", plugin.settings.enableAdvancedUri);
-    console.log("App plugins:", Object.keys(app.plugins.plugins));
-    console.log("Advanced URI plugin:", app.plugins.plugins["obsidian-advanced-uri"]);
-    
-    // 如果在设置中打开了 Advanced URI 集成，并且插件存在，则生成 Advanced URI 格式链接
-    if (plugin.settings.enableAdvancedUri && app.plugins.plugins["obsidian-advanced-uri"]) {
-        const vaultName = app.vault.getName();
-        const advancedUri = `obsidian://advanced-uri?vault=${encodeURIComponent(vaultName)}&filepath=${encodeURIComponent(filePath)}`;
-        if (alias) {
-            return `[${alias}](${advancedUri})`;
-        } else {
-            return `[${fileName}](${advancedUri})`;
+    return __awaiter(this, void 0, void 0, function* () {
+        // 获取文件相对路径，移除 .md 后缀
+        let filePath = file.path;
+        if (filePath.endsWith('.md')) {
+            filePath = filePath.substring(0, filePath.length - 3);
         }
-    }
-    
-    // 如果未启用 Advanced URI，则使用原有逻辑生成链接
-    const useMarkdownLinks = app.vault.getConfig("useMarkdownLinks");
-    if (useMarkdownLinks) {
-        if (alias) {
-            return `[${alias}](${fileName})`;
-        } else {
-            return `[${fileName}](${fileName})`;
+        // 使用文件的 basename 作为显示名称
+        const fileName = file.basename;
+        
+        // 添加调试日志，观察 Advanced URI 插件状态
+        console.log("Advanced URI integration setting:", plugin.settings.enableAdvancedUri);
+        console.log("App plugins:", Object.keys(app.plugins.plugins));
+        console.log("Advanced URI plugin:", app.plugins.plugins["obsidian-advanced-uri"]);
+        
+        // 如果在设置中打开了 Advanced URI 集成，并且插件存在，则生成 Advanced URI 格式链接
+        if (plugin.settings.enableAdvancedUri && app.plugins.plugins["obsidian-advanced-uri"]) {
+            const vaultName = app.vault.getName();
+            
+            // 尝试从文件内容中获取 UID
+            let uid = null;
+            try {
+                // 读取文件内容
+                const fileContent = yield app.vault.read(file);
+                
+                // 尝试从 YAML frontmatter 中提取 UID
+                const frontmatterMatch = fileContent.match(/^---\n([\s\S]*?)\n---/);
+                if (frontmatterMatch) {
+                    const frontmatter = frontmatterMatch[1];
+                    const uidMatch = frontmatter.match(/uid:\s*([^\s\n]+)/);
+                    if (uidMatch) {
+                        uid = uidMatch[1];
+                    }
+                }
+                
+                // 如果 frontmatter 中没有 UID，尝试查找内联 UID
+                if (!uid) {
+                    const inlineUidMatch = fileContent.match(/\nuid:\s*([^\s\n]+)/);
+                    if (inlineUidMatch) {
+                        uid = inlineUidMatch[1];
+                    }
+                }
+            } catch (error) {
+                console.error("Error reading file for UID:", error);
+            }
+            
+            // 根据是否找到 UID 生成不同的链接
+            let advancedUri;
+            if (uid) {
+                // 使用 UID 生成链接
+                advancedUri = `obsidian://advanced-uri?vault=${encodeURIComponent(vaultName)}&uid=${encodeURIComponent(uid)}`;
+            } else {
+                // 如果没有 UID，回退到使用文件路径
+                advancedUri = `obsidian://advanced-uri?vault=${encodeURIComponent(vaultName)}&filepath=${encodeURIComponent(filePath)}`;
+            }
+            
+            if (alias) {
+                return `[${alias}](${advancedUri})`;
+            } else {
+                return `[${fileName}](${advancedUri})`;
+            }
         }
-    } else {
-        if (alias) {
-            return `[[${fileName}|${alias}]]`;
+        
+        // 如果未启用 Advanced URI，则使用原有逻辑生成链接
+        const useMarkdownLinks = app.vault.getConfig("useMarkdownLinks");
+        if (useMarkdownLinks) {
+            if (alias) {
+                return `[${alias}](${fileName})`;
+            } else {
+                return `[${fileName}](${fileName})`;
+            }
         } else {
-            return `[[${fileName}]]`;
+            if (alias) {
+                return `[[${fileName}|${alias}]]`;
+            } else {
+                return `[[${fileName}]]`;
+            }
         }
-    }
+    });
 }
+
 // 默认设置
 const DEFAULT_SETTINGS = {
     autocompleteTriggerPhrase: "@",
@@ -126,6 +166,41 @@ class SettingsTab extends require$$0$1.PluginSettingTab {
                 .onChange((value) => __awaiter(this, void 0, void 0, function* () {
                     this.plugin.settings.enableAdvancedUri = value;
                     yield this.plugin.saveSettings();
+                })));
+        
+        // 新增：批量生成 UID 功能
+        containerEl.createEl("h3", {
+            text: "UID Management / UID 管理",
+        });
+        
+        new require$$0$1.Setting(containerEl)
+            .setName("Generate UIDs for all files / 为所有文件生成 UID")
+            .setDesc("Add a unique identifier (UID) to all files that don't have one / 为所有没有 UID 的文件添加唯一标识符")
+            .addButton(button => button
+                .setButtonText("Generate UIDs / 生成 UID")
+                .onClick(() => __awaiter(this, void 0, void 0, function* () {
+                    // 显示确认对话框
+                    const confirmModal = new require$$0$1.Modal(this.app);
+                    confirmModal.titleEl.setText("确认生成 UID");
+                    confirmModal.contentEl.setText("此操作将为所有没有 UID 的文件添加 UID。这将修改文件内容，确定要继续吗？");
+                    
+                    // 添加确认和取消按钮
+                    const buttonContainer = confirmModal.contentEl.createDiv();
+                    buttonContainer.addClass("modal-button-container");
+                    
+                    const cancelButton = buttonContainer.createEl("button", { text: "取消" });
+                    cancelButton.addEventListener("click", () => {
+                        confirmModal.close();
+                    });
+                    
+                    const confirmButton = buttonContainer.createEl("button", { text: "确认" });
+                    confirmButton.addClass("mod-cta");
+                    confirmButton.addEventListener("click", () => __awaiter(this, void 0, void 0, function* () {
+                        confirmModal.close();
+                        yield this.plugin.generateUIDsForAllFiles();
+                    }));
+                    
+                    confirmModal.open();
                 })));
     }
 }
@@ -203,11 +278,13 @@ class FileSuggest extends require$$0$1.EditorSuggest {
     }
     
     selectSuggestion(suggestion, event) {
-        const { editor } = this.context;
-        const includeAlias = event.shiftKey;
-        // 调用新版 generateMarkdownLink，传入完整文件对象和 plugin 实例
-        let linkText = generateMarkdownLink(this.app, suggestion.file, includeAlias ? this.context.query : undefined, this.plugin);
-        editor.replaceRange(linkText, this.context.start, this.context.end);
+        return __awaiter(this, void 0, void 0, function* () {
+            const { editor } = this.context;
+            const includeAlias = event.shiftKey;
+            // 等待链接生成
+            let linkText = yield generateMarkdownLink(this.app, suggestion.file, includeAlias ? this.context.query : undefined, this.plugin);
+            editor.replaceRange(linkText, this.context.start, this.context.end);
+        });
     }
     
     onTrigger(cursor, editor, file) {
@@ -264,6 +341,105 @@ class QuickFileLinkPlugin extends require$$0$1.Plugin {
         return __awaiter(this, void 0, void 0, function* () {
             yield this.saveData(this.settings);
         });
+    }
+    
+    // 新增：为所有文件生成 UID 的方法
+    generateUIDsForAllFiles() {
+        return __awaiter(this, void 0, void 0, function* () {
+            // 创建进度条通知
+            const statusBarItem = this.addStatusBarItem();
+            statusBarItem.setText("正在生成 UID...");
+            
+            // 获取所有 markdown 文件
+            const files = this.app.vault.getMarkdownFiles();
+            let processedCount = 0;
+            let addedCount = 0;
+            
+            // 创建通知
+            const notice = new require$$0$1.Notice("开始生成 UID...", 0);
+            
+            try {
+                for (const file of files) {
+                    // 更新进度条
+                    processedCount++;
+                    statusBarItem.setText(`正在生成 UID... (${processedCount}/${files.length})`);
+                    
+                    // 读取文件内容
+                    const content = yield this.app.vault.read(file);
+                    
+                    // 检查文件是否已有 UID
+                    const hasUID = this.checkFileHasUID(content);
+                    
+                    if (!hasUID) {
+                        // 生成新的 UID
+                        const newUID = this.generateUID();
+                        
+                        // 将 UID 添加到文件中
+                        const newContent = this.addUIDToFile(content, newUID);
+                        
+                        // 写入文件
+                        yield this.app.vault.modify(file, newContent);
+                        
+                        addedCount++;
+                    }
+                }
+                
+                // 更新通知
+                notice.setMessage(`UID 生成完成！已为 ${addedCount} 个文件添加 UID。`);
+                setTimeout(() => {
+                    notice.hide();
+                }, 5000);
+            } catch (error) {
+                console.error("生成 UID 时出错:", error);
+                new require$$0$1.Notice("生成 UID 时出错: " + error.message);
+            } finally {
+                // 移除进度条
+                statusBarItem.remove();
+            }
+        });
+    }
+    
+    // 检查文件是否已有 UID
+    checkFileHasUID(content) {
+        // 检查 YAML frontmatter 中是否有 UID
+        const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+        if (frontmatterMatch) {
+            const frontmatter = frontmatterMatch[1];
+            if (frontmatter.match(/uid:\s*([^\s\n]+)/)) {
+                return true;
+            }
+        }
+        
+        // 检查内联 UID
+        if (content.match(/\nuid:\s*([^\s\n]+)/)) {
+            return true;
+        }
+        
+        return false;
+    }
+    
+    // 生成唯一的 UID
+    generateUID() {
+        // 生成一个基于时间戳和随机数的 UID
+        const timestamp = Date.now().toString(36);
+        const randomPart = Math.random().toString(36).substring(2, 7);
+        return `${timestamp}-${randomPart}`;
+    }
+    
+    // 将 UID 添加到文件中
+    addUIDToFile(content, uid) {
+        // 检查文件是否有 YAML frontmatter
+        const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+        
+        if (frontmatterMatch) {
+            // 在 frontmatter 中添加 UID
+            const frontmatter = frontmatterMatch[1];
+            const updatedFrontmatter = frontmatter + `\nuid: ${uid}`;
+            return content.replace(frontmatterMatch[0], `---\n${updatedFrontmatter}\n---`);
+        } else {
+            // 如果没有 frontmatter，则创建一个
+            return `---\nuid: ${uid}\n---\n\n${content}`;
+        }
     }
 }
 
