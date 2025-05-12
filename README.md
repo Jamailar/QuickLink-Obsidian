@@ -113,28 +113,40 @@ QuickLink is a plugin for Obsidian that offers intelligent file linking, automat
 
 
 
-💡 贡献 & 反馈
+# 💡 贡献 & 反馈
 
 如果你对 @Link 插件 有改进建议或发现 Bug，欢迎提交 Issue 或 PR！
+
 📮 GitHub Repo：🔗 https://github.com/Jamailar/QuickLink-Obsidian/
+
 ✉️ 反馈邮箱：jamba971121@gmail.com
 
 
 # 更新日志：
-2025年3月8日
+
+### 2025年3月8日
+
 1、新增了排除文件夹的功能，防止模板文件和其他不需要的文件被检索到
+
 1、新增了对Advanced URI插件的集成支持
 
 感谢 @shoudeyunkaijianyueming 的建议
 
-2025年3月10日
+### 2025年3月10日
+
 1、修改了对advanced uri插件uid的支持
+
 2、增加了为所有没有uid的笔记增加uid的功能
 
-2025年5月12日
+### 2025年5月12日
+
 1、感谢B站网友daniellin84的建议，增加了自定义触发符号和规则的功能。
 可以根据不同的符号匹配不同的规则
+
 2、感谢B站up主 浪里小白龙7 的灵感，新增了批量创建链接的功能
+
 3、增加了主体文件夹功能
+
 4、增加了文件夹和标签的自动推荐功能，省区输入烦恼
+
 5、增加了advanced uri插件集成状态下自定义uid字段名的功能
