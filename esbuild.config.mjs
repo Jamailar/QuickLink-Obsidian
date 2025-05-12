@@ -37,7 +37,7 @@ const context = await esbuild.context({
 	logLevel: "info",
 	sourcemap: prod ? false : "inline",
 	treeShaking: true,
-	outfile: "/Users/Jam/Library/Mobile Documents/iCloud~md~obsidian/Documents/obsidian仓库/jamba/.obsidian/plugins/QuickLink/main.js",
+	outfile: "dist/main.js",
 	minify: prod,
 });
 
