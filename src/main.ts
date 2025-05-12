@@ -244,14 +244,89 @@ class SettingsTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName('Exclude Folders / 排除文件夹')
       .setDesc('Folders to exclude from search (one per line) / 排除搜索的文件夹（每行一个）')
-      .addTextArea(text =>
-        text
-          .setValue(this.plugin.settings.excludeFolders.join('\n'))
-          .onChange(async value => {
-            this.plugin.settings.excludeFolders = value.split('\n').map(s => s.trim()).filter(Boolean);
-            await this.plugin.saveSettings();
-          })
-      );
+      .addTextArea(text => {
+        const input = text.inputEl;
+        const wrapper = input.parentElement as HTMLElement;
+        wrapper.style.position = 'relative';
+        const suggestEl = document.createElement('div');
+        suggestEl.className = 'quicklink-inline-suggestions';
+        Object.assign(suggestEl.style, {
+          position: 'absolute',
+          top: `${input.offsetHeight + 2}px`,
+          left: 'auto',
+          right: '0',
+          zIndex: '100',
+          background: 'var(--background-primary)',
+          border: '1px solid var(--interactive-normal)',
+          maxHeight: '200px',
+          overflowY: 'auto',
+        });
+        wrapper.appendChild(suggestEl);
+
+        const updateSuggestions = async () => {
+          const lines = input.value.split('\n').map(s => s.trim()).filter(Boolean);
+          this.plugin.settings.excludeFolders = lines;
+          await this.plugin.saveSettings();
+
+          const cursorPos = input.selectionStart || 0;
+          const before = input.value.substring(0, cursorPos);
+          const parts = before.split('\n');
+          const current = parts[parts.length - 1];
+
+          let suggestions: string[] = [];
+          const files = this.app.vault.getMarkdownFiles();
+          if (!current.includes('/')) {
+            const set = new Set<string>();
+            files.forEach(f => {
+              const p = f.path.split('/')[0];
+              if (f.path.includes('/')) set.add(p);
+            });
+            suggestions = Array.from(set);
+          } else {
+            const base = current.endsWith('/') ? current : current + '/';
+            const set = new Set<string>();
+            files.forEach(f => {
+              if (f.path.startsWith(base)) {
+                const rem = f.path.substring(base.length);
+                const slash = rem.indexOf('/');
+                if (slash !== -1) {
+                  const next = rem.substring(0, slash);
+                  set.add(base + next);
+                }
+              }
+            });
+            suggestions = Array.from(set);
+          }
+
+          const q = current.toLowerCase();
+          suggestions = suggestions
+            .filter(s => s.toLowerCase().includes(q))
+            .sort((a, b) => a.localeCompare(b))
+            .slice(0, 50);
+
+          suggestEl.innerHTML = '';
+          suggestions.forEach(sug => {
+            const item = document.createElement('div');
+            item.textContent = sug;
+            Object.assign(item.style, { padding: '4px', cursor: 'pointer', textAlign: 'right' });
+            item.addEventListener('mousedown', async e => {
+              e.preventDefault();
+              const all = input.value.split('\n');
+              all[parts.length - 1] = sug;
+              input.value = all.join('\n');
+              this.plugin.settings.excludeFolders = all.filter(s => s.trim());
+              await this.plugin.saveSettings();
+              suggestEl.innerHTML = '';
+            });
+            suggestEl.addEventListener('mouseleave', () => { suggestEl.innerHTML = ''; });
+            suggestEl.appendChild(item);
+          });
+        };
+
+        input.addEventListener('input', updateSuggestions);
+        input.addEventListener('focus', updateSuggestions);
+        input.addEventListener('blur', () => { suggestEl.innerHTML = ''; });
+      });
 
     new Setting(containerEl)
       .setName('Enable Advanced URI Integration / 启用高级 URI 集成')
@@ -327,13 +402,89 @@ class SettingsTab extends PluginSettingTab {
       new Setting(ruleContainer)
         .setName('Include Folders / 包含文件夹')
         .setDesc('仅在这些文件夹中搜索（每行一个）')
-        .addTextArea(text =>
-          text
-            .setValue(rule.includeFolders.join('\n'))
-            .onChange(value => {
-              rule.includeFolders = value.split('\n').map(s => s.trim()).filter(Boolean);
-            })
-        );
+        .addTextArea(text => {
+          const input = text.inputEl;
+          const wrapper = input.parentElement as HTMLElement;
+          wrapper.style.position = 'relative';
+          const suggestEl = document.createElement('div');
+          suggestEl.className = 'quicklink-inline-suggestions';
+          Object.assign(suggestEl.style, {
+            position: 'absolute',
+            top: `${input.offsetHeight + 2}px`,
+            left: 'auto',
+            right: '0',
+            zIndex: '100',
+            background: 'var(--background-primary)',
+            border: '1px solid var(--interactive-normal)',
+            maxHeight: '200px',
+            overflowY: 'auto',
+          });
+          wrapper.appendChild(suggestEl);
+
+          const updateSuggestions = async () => {
+            const lines = input.value.split('\n').map(s => s.trim()).filter(Boolean);
+            rule.includeFolders = lines;
+            await this.plugin.saveSettings();
+
+            const cursorPos = input.selectionStart || 0;
+            const before = input.value.substring(0, cursorPos);
+            const parts = before.split('\n');
+            const current = parts[parts.length - 1];
+
+            let suggestions: string[] = [];
+            const files = this.app.vault.getMarkdownFiles();
+            if (!current.includes('/')) {
+              const set = new Set<string>();
+              files.forEach(f => {
+                const p = f.path.split('/')[0];
+                if (f.path.includes('/')) set.add(p);
+              });
+              suggestions = Array.from(set);
+            } else {
+              const base = current.endsWith('/') ? current : current + '/';
+              const set = new Set<string>();
+              files.forEach(f => {
+                if (f.path.startsWith(base)) {
+                  const rem = f.path.substring(base.length);
+                  const slash = rem.indexOf('/');
+                  if (slash !== -1) {
+                    const next = rem.substring(0, slash);
+                    set.add(base + next);
+                  }
+                }
+              });
+              suggestions = Array.from(set);
+            }
+
+            const q = current.toLowerCase();
+            suggestions = suggestions
+              .filter(s => s.toLowerCase().includes(q))
+              .sort((a, b) => a.localeCompare(b))
+              .slice(0, 50);
+
+            suggestEl.innerHTML = '';
+            suggestions.forEach(sug => {
+              const item = document.createElement('div');
+              item.textContent = sug;
+              Object.assign(item.style, { padding: '4px', cursor: 'pointer', textAlign: 'right' });
+              item.addEventListener('mousedown', async e => {
+                e.preventDefault();
+                const all = input.value.split('\n');
+                all[parts.length - 1] = sug;
+                input.value = all.join('\n');
+                rule.includeFolders = all.filter(s => s.trim());
+                await this.plugin.saveSettings();
+                suggestEl.innerHTML = '';
+              });
+              suggestEl.addEventListener('mouseleave', () => { suggestEl.innerHTML = ''; });
+              suggestEl.appendChild(item);
+            });
+          };
+
+          input.addEventListener('input', updateSuggestions);
+          input.addEventListener('focus', updateSuggestions);
+          input.addEventListener('blur', () => { suggestEl.innerHTML = ''; });
+        });
 
       // Name Filter Regex
       new Setting(ruleContainer)
