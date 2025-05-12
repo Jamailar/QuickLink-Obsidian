@@ -17,6 +17,7 @@ interface QuickLinkSettings {
   enableAdvancedUri: boolean;
   triggerFilterRules: TriggerFilterRule[];
   mainPaths: string[]; // 全局符号的限定文件夹列表
+  advancedUriField: string; // Frontmatter field name for UID
 }
 
 // 更新默认设置
@@ -27,6 +28,7 @@ const DEFAULT_SETTINGS: QuickLinkSettings = {
   enableAdvancedUri: false,
   triggerFilterRules: [],
   mainPaths: [],
+  advancedUriField: 'uid',
 };
 
 /** FolderSuggestModal for inline folder suggestions */
@@ -69,23 +71,28 @@ async function generateMarkdownLink(
   // Advanced URI 逻辑
   if (plugin.settings.enableAdvancedUri && (app as any).plugins.plugins['obsidian-advanced-uri']) {
     const vaultName = app.vault.getName();
+    const fieldName = plugin.settings.advancedUriField;
     let uid: string | null = null;
     try {
       const content = await app.vault.read(file);
       const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
       if (fmMatch) {
-        const uidMatch = fmMatch[1].match(/uid:\s*([^\s\n]+)/);
+        const uidMatch = fmMatch[1].match(new RegExp(`${fieldName}:\\s*([^\\s\\n]+)`));
         if (uidMatch) uid = uidMatch[1];
       }
       if (!uid) {
-        const inline = content.match(/\nuid:\s*([^\s\n]+)/);
+        const inline = content.match(new RegExp(`\\n${fieldName}:\\s*([^\\s\\n]+)`));
         if (inline) uid = inline[1];
       }
     } catch {}
-    const uri = uid
-      ? `obsidian://advanced-uri?vault=${encodeURIComponent(vaultName)}&uid=${encodeURIComponent(uid)}`
-      : `obsidian://advanced-uri?vault=${encodeURIComponent(vaultName)}&filepath=${encodeURIComponent(filePath)}`;
-    return alias ? `[${alias}](${uri})` : `[${fileName}](${uri})`;
+    let advancedUri: string;
+    if (uid) {
+      const param = encodeURIComponent(fieldName);
+      advancedUri = `obsidian://advanced-uri?vault=${encodeURIComponent(vaultName)}&${param}=${encodeURIComponent(uid)}`;
+    } else {
+      advancedUri = `obsidian://advanced-uri?vault=${encodeURIComponent(vaultName)}&filepath=${encodeURIComponent(filePath)}`;
+    }
+    return alias ? `[${alias}](${advancedUri})` : `[${fileName}](${advancedUri})`;
   }
 
   // 普通链接逻辑
@@ -340,6 +347,19 @@ class SettingsTab extends PluginSettingTab {
           })
       );
 
+    new Setting(containerEl)
+      .setName('UID Field Name / UID 字段名')
+      .setDesc('Frontmatter field name for UID used in Advanced URI / 用于 Advanced URI 的前置字段名')
+      .addText(text =>
+        text
+          .setPlaceholder('uid')
+          .setValue(this.plugin.settings.advancedUriField)
+          .onChange(async value => {
+            this.plugin.settings.advancedUriField = value.trim();
+            await this.plugin.saveSettings();
+          })
+      );
+
     containerEl.createEl('h3', { text: 'Custom Rules / 自定义规则' });
 
     // Trigger Filter Rules 列表
@@ -502,13 +522,77 @@ class SettingsTab extends PluginSettingTab {
       new Setting(ruleContainer)
         .setName('Include Tags / 包含标签')
         .setDesc('仅在包含这些标签的文件中搜索（每行一个）')
-        .addTextArea(text =>
-          text
-            .setValue(rule.includeTags.join('\n'))
-            .onChange(value => {
-              rule.includeTags = value.split('\n').map(s => s.trim()).filter(Boolean);
-            })
-        );
+        .addTextArea(text => {
+          const input = text.inputEl;
+          const wrapper = input.parentElement as HTMLElement;
+          wrapper.style.position = 'relative';
+
+          const suggestEl = document.createElement('div');
+          suggestEl.className = 'quicklink-inline-suggestions';
+          Object.assign(suggestEl.style, {
+            position: 'absolute',
+            top: `${input.offsetHeight + 2}px`,
+            left: 'auto',
+            right: '0',
+            zIndex: '100',
+            background: 'var(--background-primary)',
+            border: '1px solid var(--interactive-normal)',
+            maxHeight: '200px',
+            overflowY: 'auto',
+          });
+          wrapper.appendChild(suggestEl);
+
+          // Gather all unique tags in the vault
+          const allTags = Array.from(
+            new Set(
+              this.app.vault.getMarkdownFiles().flatMap(f => {
+                const cache = this.app.metadataCache.getFileCache(f);
+                return cache?.tags?.map(t => t.tag.startsWith('#') ? t.tag.substring(1) : t.tag) || [];
+              })
+            )
+          );
+
+          const updateSuggestions = async () => {
+            // Save current lines as includeTags
+            const lines = input.value.split('\n').map(s => s.trim()).filter(Boolean);
+            rule.includeTags = lines;
+            await this.plugin.saveSettings();
+
+            const cursorPos = input.selectionStart || 0;
+            const before = input.value.substring(0, cursorPos);
+            const parts = before.split('\n');
+            const current = parts[parts.length - 1].toLowerCase();
+
+            // Filter and sort tags
+            const suggestions = allTags
+              .filter(tag => tag.toLowerCase().includes(current))
+              .sort((a, b) => a.localeCompare(b))
+              .slice(0, 50);
+
+            // Render suggestions
+            suggestEl.innerHTML = '';
+            suggestions.forEach(tag => {
+              const item = document.createElement('div');
+              item.textContent = tag;
+              Object.assign(item.style, { padding: '4px', cursor: 'pointer', textAlign: 'right' });
+              item.addEventListener('mousedown', async e => {
+                e.preventDefault();
+                // Replace current line with selected tag
+                const allLines = input.value.split('\n');
+                allLines[parts.length - 1] = tag;
+                input.value = allLines.join('\n');
+                rule.includeTags = allLines.filter(s => s.trim());
+                await this.plugin.saveSettings();
+                suggestEl.innerHTML = '';
+              });
+              suggestEl.appendChild(item);
+            });
+          };
+
+          input.addEventListener('input', updateSuggestions);
+          input.addEventListener('focus', updateSuggestions);
+          input.addEventListener('blur', () => { suggestEl.innerHTML = ''; });
+        });
 
       // Save Rule button
       new Setting(ruleContainer)
