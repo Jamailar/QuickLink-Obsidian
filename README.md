@@ -1,94 +1,140 @@
-# Obsidian Sample Plugin
 
-This is a sample plugin for Obsidian (https://obsidian.md).
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open Sample Modal" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and output 'click' to the console.
-- Registers a global interval which logs 'setInterval' to the console.
+# QuickLink
 
-## First time developing plugins?
+QuickLink 是一款用于 Obsidian 的插件，提供智能文件链接、自动扫描以及自定义补全规则功能。
 
-Quick starting guide for new plugin devs:
+QuickLink is a plugin for Obsidian that offers intelligent file linking, automatic scanning, and customizable suggestion triggers.
 
-- Check if [someone already developed a plugin for what you want](https://obsidian.md/plugins)! There might be an existing plugin similar enough that you can partner up with.
-- Make a copy of this repo as a template with the "Use this template" button (login to GitHub if you don't see it).
-- Clone your repo to a local development folder. For convenience, you can place this folder in your `.obsidian/plugins/your-plugin-name` folder.
-- Install NodeJS, then run `npm i` in the command line under your repo folder.
-- Run `npm run dev` to compile your plugin from `main.ts` to `main.js`.
-- Make changes to `main.ts` (or create new `.ts` files). Those changes should be automatically compiled into `main.js`.
-- Reload Obsidian to load the new version of your plugin.
-- Enable plugin in settings window.
-- For updates to the Obsidian API run `npm update` in the command line under your repo folder.
+---
 
-## Releasing new releases
+## 🧠 功能说明 Features
 
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
-- Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
-- Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
-- Publish the release.
+### 📌 文件智能补全 File Auto-Suggestion
 
-> You can simplify the version bump process by running `npm version patch`, `npm version minor` or `npm version major` after updating `minAppVersion` manually in `manifest.json`.
-> The command will bump version in `manifest.json` and `package.json`, and add the entry for the new version to `versions.json`
+- **默认触发符 @**：输入 `@` 后，会弹出文件建议列表，支持全局搜索（可设置排除文件夹）。
+- **自定义触发规则**：你可以添加多个触发规则，每个规则包括：
+  - 触发符号（如 `!`、`#` 等）
+  - 限定的文件夹（仅这些目录中的文件参与匹配）
+  - 正则过滤（只匹配符合命名规则的文件）
+  - 标签过滤（只匹配含有指定标签的文件）
 
-## Adding your plugin to the community plugin list
+> **操作方式：**
+> 在编辑器中输入触发字符，输入关键词，即可弹出对应建议，按 `Enter` 插入链接。按住 `Shift+Enter` 可添加别名。
 
-- Check the [plugin guidelines](https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines).
-- Publish an initial version.
-- Make sure you have a `README.md` file in the root of your repo.
-- Make a pull request at https://github.com/obsidianmd/obsidian-releases to add your plugin.
+> **How to use:**
+> Type the trigger character in the editor and enter keywords to bring up suggestions. Press `Enter` to insert a link, or hold `Shift+Enter` to add an alias.
 
-## How to use
+---
 
-- Clone this repo.
-- Make sure your NodeJS is at least v16 (`node --version`).
-- `npm i` or `yarn` to install dependencies.
-- `npm run dev` to start compilation in watch mode.
+### 🗂 主体文件夹设定 Main Folders
 
-## Manually installing the plugin
+- 设置“主体文件夹”后，补全建议和自动扫描功能只作用于这些路径下的文档。
+- 支持多行输入（每行一个路径），每行在输入时会自动弹出路径建议，支持多层级文件夹。
 
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
+- After setting "Main Folders", suggestions and auto scan will only apply to documents under these paths.
+- Supports multi-line input (one path per line), with auto-complete suggestions for each line and multi-level folders.
 
-## Improve code quality with eslint (optional)
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code. 
-- To use eslint with this project, make sure to install eslint from terminal:
-  - `npm install -g eslint`
-- To use eslint to analyze this project use this command:
-  - `eslint main.ts`
-  - eslint will then create a report with suggestions for code improvement by file and line number.
-- If your source code is in a folder, such as `src`, you can use eslint with this command to analyze all files in that folder:
-  - `eslint .\src\`
+---
 
-## Funding URL
+### 🚫 排除文件夹 Excluded Folders
 
-You can include funding URLs where people who use your plugin can financially support it.
+- 全局补全时会忽略这些文件夹。
+- 也支持多行输入和路径提示。
 
-The simple way is to set the `fundingUrl` field to your link in your `manifest.json` file:
+- These folders will be ignored in global suggestions.
+- Also supports multi-line input and path suggestions.
 
-```json
-{
-    "fundingUrl": "https://buymeacoffee.com"
-}
-```
+---
 
-If you have multiple URLs, you can also do:
+### 🧩 Advanced URI 支持 Advanced URI Support
 
-```json
-{
-    "fundingUrl": {
-        "Buy Me a Coffee": "https://buymeacoffee.com",
-        "GitHub Sponsor": "https://github.com/sponsors",
-        "Patreon": "https://www.patreon.com/"
-    }
-}
-```
+- 开启后会生成 `obsidian://advanced-uri?...` 格式的链接。
+- 可自定义用于生成链接的 frontmatter 字段名（如 `uid`、`custom_id` 等）。
 
-## API Documentation
+- When enabled, links are generated in the `obsidian://advanced-uri?...` format.
+- You can customize the frontmatter field used for link generation (e.g., `uid`, `custom_id`, etc.).
 
-See https://github.com/obsidianmd/obsidian-api
+---
+
+### 🔍 自动扫描 Auto Link Scan
+
+- 在最左侧栏添加了 “Auto Link Scan” 图标按钮。
+- 单击后，插件会自动扫描当前打开的文档内容，将所有文字中匹配“主体文件夹”下文件名的内容替换为链接。
+- 支持普通链接或 Advanced URI 格式。
+
+> **操作流程举例 Example workflow:**
+> - 假设“主体文件夹”中有一个文件 `人际/张三.md`
+> - 当前文档中出现了“张三”两个字
+> - 扫描后会自动将其替换为 `[[张三]]` 或 `[张三](obsidian://advanced-uri?...uid=张三)` 的格式
+
+> - Suppose there is a file `People/ZhangSan.md` in your "Main Folders".
+> - If "ZhangSan" appears in the current document,
+> - After scanning, it will be automatically replaced with `[[ZhangSan]]` or `[ZhangSan](obsidian://advanced-uri?...uid=ZhangSan)`.
+
+---
+
+### 🧠 Tag 标签匹配 Tag-based Filtering
+
+- 每条自定义规则都可以设置标签过滤。
+- 输入标签时支持自动提示 vault 中已存在的标签，输入时即可补全。
+
+- Each custom rule can set tag-based filtering.
+- Tag input supports auto-completion for existing tags in your vault.
+
+---
+
+## ⚙️ 设置入口 Settings Panel
+
+插件设置包含 / The plugin settings include:
+
+| 中文 | English | 说明 / Description |
+|------|---------|-------------------|
+| 启用补全 | Enable Suggestions | 开启或关闭建议补全功能 / Enable or disable suggestion completion |
+| 全局触发字符 | Trigger Character | 默认使用 `@` 触发补全建议 / Default trigger for suggestions |
+| 主体文件夹 | Main Folders | 限定参与补全与扫描的文件夹路径 / Folders for suggestions and scanning |
+| 排除文件夹 | Exclude Folders | 全局排除不参与的文件夹 / Folders to exclude globally |
+| 自定义规则 | Custom Rules | 每条规则包含：前缀、名称、包含文件夹、标签、正则过滤 / Each rule: prefix, name, folders, tags, regex |
+| 开启 URI 模式 | Enable Advanced URI | 链接使用 advanced-uri 格式 / Use advanced-uri format for links |
+| UID 字段名 | UID Field Name | 指定链接所依赖的字段名，默认为 `uid` / Field name used in links, default `uid` |
+
+---
+
+## ✨ 使用建议 Usage Tips
+
+- 推荐配合 YAML frontmatter 的 UID 字段与 Advanced URI 插件使用，生成持久链接。
+- 自定义多个触发前缀可以提升结构化笔记能力（如 `!人物`、`#地点`）。
+- 可配合快捷键执行自动扫描，快速构建链接网络。
+
+- It is recommended to use the UID field in YAML frontmatter and the Advanced URI plugin for persistent links.
+- Defining multiple trigger prefixes (e.g., `!Person`, `#Place`) helps structure your notes.
+- Use keyboard shortcuts to run auto scan and quickly build your link network.
+
+
+
+💡 贡献 & 反馈
+
+如果你对 @Link 插件 有改进建议或发现 Bug，欢迎提交 Issue 或 PR！
+📮 GitHub Repo：🔗 https://github.com/Jamailar/QuickLink-Obsidian/
+✉️ 反馈邮箱：jamba971121@gmail.com
+
+
+# 更新日志：
+2025年3月8日
+1、新增了排除文件夹的功能，防止模板文件和其他不需要的文件被检索到
+1、新增了对Advanced URI插件的集成支持
+
+感谢 @shoudeyunkaijianyueming 的建议
+
+2025年3月10日
+1、修改了对advanced uri插件uid的支持
+2、增加了为所有没有uid的笔记增加uid的功能
+
+2025年5月12日
+1、感谢B站网友daniellin84的建议，增加了自定义触发符号和规则的功能。
+可以根据不同的符号匹配不同的规则
+2、感谢B站up主 浪里小白龙7 的灵感，新增了批量创建链接的功能
+3、增加了主体文件夹功能
+4、增加了文件夹和标签的自动推荐功能，省区输入烦恼
+5、增加了advanced uri插件集成状态下自定义uid字段名的功能
