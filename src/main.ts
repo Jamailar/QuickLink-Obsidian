@@ -1,4 +1,4 @@
-import { App, Plugin, PluginSettingTab, Setting, Notice, EditorSuggest, TFile, EditorSuggestContext, EditorPosition, Editor, SuggestModal, TextAreaComponent } from 'obsidian';
+import { App, Plugin, PluginSettingTab, Setting, Notice, EditorSuggest, TFile, EditorSuggestContext, EditorPosition, Editor, SuggestModal, TextAreaComponent, MarkdownView } from 'obsidian';
 
 /** 单个触发规则定义 */
 interface TriggerFilterRule {
@@ -102,6 +102,11 @@ async function generateMarkdownLink(
     return target;
   }
   return alias ? `[[${fileName}|${alias}]]` : `[[${fileName}]]`;
+}
+
+/** Escape string for use in RegExp */
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 
@@ -756,9 +761,52 @@ export default class QuickLinkPlugin extends Plugin {
     this.addSettingTab(new SettingsTab(this.app, this));
     this.suggest = new FileSuggest(this.app, this);
     this.registerEditorSuggest(this.suggest);
+    this.addRibbonIcon('link-2', 'Auto Link Scan / 自动扫描', () => {
+      this.runAutoScan();
+    });
   }
 
   onunload() {}
+
+  /** 自动扫描当前文档，链接主体文件夹下匹配的文件名 */
+  async runAutoScan(): Promise<void> {
+    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (!view || !view.file) {
+      new Notice('请在 Markdown 视图中使用此功能');
+      return;
+    }
+    const file = view.file;
+    const content = await this.app.vault.read(file);
+    let targets = this.app.vault.getMarkdownFiles();
+    if (this.settings.mainPaths?.length) {
+      targets = targets.filter(f =>
+        this.settings.mainPaths.some(p => f.path.startsWith(p + '/'))
+      );
+    }
+    console.log('QuickLink runAutoScan: target files:', targets.map(f => f.path));
+    let newContent = content;
+    let totalCount = 0;
+    for (const tf of targets) {
+      console.log(`QuickLink runAutoScan: scanning file basename='${tf.basename}' path='${tf.path}'`);
+      const name = tf.basename;
+      // Match whole name with non-word boundary, supporting Chinese
+      const pattern = `(^|\\W)${escapeRegExp(name)}(?=\\W|$)`;
+      const regex = new RegExp(pattern, 'g');
+      // Find matches on the current newContent
+      const matches = newContent.match(regex);
+      if (matches && matches.length > 0) {
+        console.log(`QuickLink runAutoScan: found ${matches.length} matches for '${name}'`);
+        totalCount += matches.length;
+        const linkText = await generateMarkdownLink(this.app, tf, undefined, this);
+        console.log(`QuickLink runAutoScan: linkText='${linkText}'`);
+        // Replace occurrences, preserving preceding character
+        newContent = newContent.replace(regex, (_match, p1) => `${p1}${linkText}`);
+      }
+    }
+    console.log(`QuickLink runAutoScan: total replacements to apply: ${totalCount}`);
+    await this.app.vault.modify(file, newContent);
+    new Notice(`自动扫描完成，已链接 ${totalCount} 处`);
+  }
 
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
