@@ -1,4 +1,4 @@
-import { App, Plugin, PluginSettingTab, Setting, Notice, EditorSuggest, TFile, EditorSuggestContext, EditorPosition, Editor, SuggestModal, TextAreaComponent, MarkdownView } from 'obsidian';
+import { App, Plugin, PluginSettingTab, Setting, Notice, EditorSuggest, TFile, EditorSuggestContext, EditorPosition, Editor, SuggestModal, TextAreaComponent, MarkdownView, normalizePath, getAllTags, FileManager, HeadingCache, TFolder } from 'obsidian';
 
 /** 单个触发规则定义 */
 interface TriggerFilterRule {
@@ -61,11 +61,11 @@ class FolderSuggestModal extends SuggestModal<string> {
 async function generateMarkdownLink(
   app: App,
   file: TFile,
+  sourcePath: string,
   alias: string | undefined,
   plugin: QuickLinkPlugin
 ): Promise<string> {
   // 文件路径与名称处理
-  let filePath = file.path.replace(/\.md$/, '');
   const fileName = file.basename;
 
   // Advanced URI 逻辑
@@ -73,35 +73,31 @@ async function generateMarkdownLink(
     const vaultName = app.vault.getName();
     const fieldName = plugin.settings.advancedUriField;
     let uid: string | null = null;
-    try {
-      const content = await app.vault.read(file);
-      const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
-      if (fmMatch) {
-        const uidMatch = fmMatch[1].match(new RegExp(`${fieldName}:\\s*([^\\s\\n]+)`));
-        if (uidMatch) uid = uidMatch[1];
-      }
-      if (!uid) {
-        const inline = content.match(new RegExp(`\\n${fieldName}:\\s*([^\\s\\n]+)`));
-        if (inline) uid = inline[1];
-      }
-    } catch {}
+    const fileCache = app.metadataCache.getFileCache(file);
+    if (fileCache?.frontmatter && fieldName in fileCache.frontmatter) {
+      uid = fileCache.frontmatter[fieldName];
+    }
+
+    if (!uid) {
+        try {
+            const content = await app.vault.read(file);
+            const inline = content.match(new RegExp(`\\n${fieldName}:\\s*([^\\s\\n]+)`));
+            if (inline) uid = inline[1];
+        } catch {}
+    }
+
     let advancedUri: string;
     if (uid) {
       const param = encodeURIComponent(fieldName);
       advancedUri = `obsidian://advanced-uri?vault=${encodeURIComponent(vaultName)}&${param}=${encodeURIComponent(uid)}`;
     } else {
-      advancedUri = `obsidian://advanced-uri?vault=${encodeURIComponent(vaultName)}&filepath=${encodeURIComponent(filePath)}`;
+      advancedUri = `obsidian://advanced-uri?vault=${encodeURIComponent(vaultName)}&filepath=${encodeURIComponent(normalizePath(file.path))}`;
     }
     return alias ? `[${alias}](${advancedUri})` : `[${fileName}](${advancedUri})`;
   }
 
   // 普通链接逻辑
-  const useMdLinks = (app.vault as any).getConfig('useMarkdownLinks');
-  if (useMdLinks) {
-    const target = alias ? `[${alias}](${fileName})` : `[${fileName}](${fileName})`;
-    return target;
-  }
-  return alias ? `[[${fileName}|${alias}]]` : `[[${fileName}]]`;
+  return app.fileManager.generateMarkdownLink(file, sourcePath, undefined, alias);
 }
 
 /** Escape string for use in RegExp */
@@ -121,458 +117,355 @@ class SettingsTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl('h2', { text: 'Quick File Linker Settings / 快速文件链接设置' });
 
     new Setting(containerEl)
-      .setName('Enable Suggestions / 启用建议')
-      .setDesc(`Trigger on '${this.plugin.settings.autocompleteTriggerPhrase}' / 使用 '${this.plugin.settings.autocompleteTriggerPhrase}' 触发文件建议`)
+      .setName('Enable suggestions / 启用建议')
+      .setDesc(`Trigger on '${this.plugin.settings.autocompleteTriggerPhrase}' to suggest files / 使用 '${this.plugin.settings.autocompleteTriggerPhrase}' 触发文件建议`)
       .addToggle(toggle =>
         toggle
           .setValue(this.plugin.settings.isAutosuggestEnabled)
           .onChange(async value => {
             this.plugin.settings.isAutosuggestEnabled = value;
             await this.plugin.saveSettings();
+            this.display();
           })
       );
 
-    new Setting(containerEl)
-      .setName('Trigger Character / 触发字符')
-      .setDesc('Character that will trigger file suggestions / 触发文件建议的字符')
-      .addText(text =>
-        text
-          .setValue(this.plugin.settings.autocompleteTriggerPhrase)
-          .onChange(async value => {
-            this.plugin.settings.autocompleteTriggerPhrase = value;
+    if (this.plugin.settings.isAutosuggestEnabled) {
+      new Setting(containerEl)
+        .setName('Trigger character / 触发字符')
+        .setDesc('Character that will trigger file suggestions / 触发文件建议的字符')
+        .addText(text =>
+          text
+            .setValue(this.plugin.settings.autocompleteTriggerPhrase)
+            .onChange(async value => {
+              this.plugin.settings.autocompleteTriggerPhrase = value;
+              await this.plugin.saveSettings();
+            })
+        );
+    }
+
+
+    const createFolderSuggest = (textArea: TextAreaComponent, setPaths: (paths: string[]) => void) => {
+        const input = textArea.inputEl;
+        let suggestEl: HTMLElement | null = null;
+        let suggestions: string[] = [];
+        let selectedIndex = 0;
+        let isActive = false;
+    
+        const showSuggestions = () => {
+            if (!suggestEl) {
+                suggestEl = input.parentElement?.createDiv({ cls: 'suggestion-container' }) || null;
+                if (suggestEl) {
+                    suggestEl.style.top = `${input.offsetTop + input.offsetHeight}px`;
+                    suggestEl.style.left = `${input.offsetLeft}px`;
+                    suggestEl.style.width = `${input.offsetWidth}px`;
+                }
+            }
+            if (!suggestEl || suggestions.length === 0) {
+                hideSuggestions();
+                return;
+            }
+    
+            suggestEl.empty();
+            suggestEl.style.display = 'block';
+            isActive = true;
+    
+            suggestions.forEach((sug, i) => {
+                const item = suggestEl!.createDiv({ cls: 'suggestion-item', text: sug });
+                if (i === selectedIndex) {
+                    item.addClass('is-selected');
+                }
+                item.addEventListener('mousedown', async (e) => {
+                    e.preventDefault();
+                    await selectSuggestion(i);
+                });
+            });
+        };
+    
+        const hideSuggestions = () => {
+            if (suggestEl) {
+                suggestEl.style.display = 'none';
+            }
+            isActive = false;
+            selectedIndex = 0;
+        };
+    
+        const selectSuggestion = async (index: number) => {
+            if (index < 0 || index >= suggestions.length) return;
+    
+            const selected = suggestions[index];
+            const lines = input.value.split('\n');
+            const { currentLineIndex } = getActiveLine(input);
+    
+            if (currentLineIndex === -1) {
+                hideSuggestions();
+                return;
+            }
+            
+            lines[currentLineIndex] = selected;
+            
+            const newValue = lines.join('\n');
+            
+            const newPaths = lines.map(l => normalizePath(l.trim())).filter(Boolean);
+            setPaths(newPaths);
             await this.plugin.saveSettings();
-          })
-      );
+            
+            input.value = newValue;
+            
+            let newCursorPos = 0;
+            for (let i = 0; i < currentLineIndex; i++) {
+                newCursorPos += lines[i].length + 1;
+            }
+            newCursorPos += lines[currentLineIndex].length;
+            input.setSelectionRange(newCursorPos, newCursorPos);
+    
+            hideSuggestions();
+        };
+        
+        const getActiveLine = (el: HTMLTextAreaElement): { currentLineIndex: number, currentLine: string } => {
+            const lines = el.value.split('\n');
+            const cursorPos = el.selectionStart || 0;
+            let charCount = 0;
+            for (let i = 0; i < lines.length; i++) {
+                const lineEnd = charCount + lines[i].length;
+                if (cursorPos >= charCount && cursorPos <= lineEnd + 1) {
+                    return { currentLineIndex: i, currentLine: lines[i] };
+                }
+                charCount += lines[i].length + 1;
+            }
+            return { currentLineIndex: -1, currentLine: '' };
+        };
+    
+        const updateSuggestions = () => {
+            const { currentLine } = getActiveLine(input);
+            const lowerCurrentLine = currentLine.toLowerCase();
+
+            const lastSlashIndex = lowerCurrentLine.lastIndexOf('/');
+            const basePath = lastSlashIndex === -1 ? '' : lowerCurrentLine.substring(0, lastSlashIndex + 1);
+            const searchFragment = lowerCurrentLine.substring(lastSlashIndex + 1);
+
+            const allFolders = this.app.vault.getAllLoadedFiles()
+                .filter((f): f is TFolder => f instanceof TFolder && f.path !== '/')
+                .map(f => f.path);
+            
+            const children = new Set<string>();
+            for (const folder of allFolders) {
+                const lowerFolder = folder.toLowerCase();
+                if (basePath === '' && !lowerFolder.includes('/')) {
+                    children.add(folder);
+                } else if (basePath !== '' && lowerFolder.startsWith(basePath) && lowerFolder.length > basePath.length) {
+                    const remainder = folder.substring(basePath.length);
+                    const nextSlash = remainder.indexOf('/');
+                    const childName = nextSlash === -1 ? remainder : remainder.substring(0, nextSlash);
+                    children.add(basePath + childName);
+                }
+            }
+
+            suggestions = Array.from(children)
+                .filter(child => child.toLowerCase().substring(lastSlashIndex + 1).includes(searchFragment))
+                .sort()
+                .slice(0, 10);
+            
+            if (suggestions.length > 0 && !(suggestions.length === 1 && suggestions[0].toLowerCase() === lowerCurrentLine.trim())) {
+                 selectedIndex = 0;
+                 showSuggestions();
+            } else {
+                 hideSuggestions();
+            }
+        };
+    
+        input.addEventListener('keydown', async (e: KeyboardEvent) => {
+            if (!isActive) return;
+    
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                selectedIndex = (selectedIndex + 1) % suggestions.length;
+                showSuggestions();
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                selectedIndex = (selectedIndex - 1 + suggestions.length) % suggestions.length;
+                showSuggestions();
+            } else if (e.key === 'Enter' || e.key === 'Tab') {
+                e.preventDefault();
+                await selectSuggestion(selectedIndex);
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                hideSuggestions();
+            }
+        });
+    
+        input.addEventListener('input', updateSuggestions);
+        input.addEventListener('focus', updateSuggestions);
+        input.addEventListener('blur', () => {
+            setTimeout(() => {
+                hideSuggestions();
+            }, 150);
+        });
+    };
 
     new Setting(containerEl)
-      .setName('主体文件夹 / Main Folders')
+      .setName('Main folders / 主体文件夹')
       .setDesc(
-        '设置该文件夹用于自动扫描文档进行自动连接创建。\n' +
-        '使用全局触发符时，仅在这些文件夹中搜索（留空表示全局）'
+        'Set these folders for auto-linking. When using the global trigger, search will be limited to these folders (leave empty for global search).\n设置该文件夹用于自动扫描文档进行自动连接创建。使用全局触发符时，仅在这些文件夹中搜索（留空表示全局）。'
       )
       .addTextArea(
         text => {
-          const input = text.inputEl;
-          const wrapper = input.parentElement as HTMLElement;
-          wrapper.addClass('quicklink-wrapper');
-          // Use Obsidian DOM helpers for suggestion container
-          const suggestEl = wrapper.createDiv();
-          suggestEl.addClass('quicklink-inline-suggestions');
-          // handler to update suggestions, used on input and focus
-          const updateSuggestions = async () => {
-            const lines = input.value.split('\n').map(s => s.trim()).filter(Boolean);
-            this.plugin.settings.mainPaths = lines;
-            await this.plugin.saveSettings();
-            const cursorPos = input.selectionStart || 0;
-            const before = input.value.substring(0, cursorPos);
-            const parts = before.split('\n');
-            const current = parts[parts.length - 1];
-            let suggestions: string[] = [];
-            const files = this.app.vault.getMarkdownFiles();
-            if (!current.includes('/')) {
-              const set = new Set<string>();
-              files.forEach(f => {
-                const p = f.path.split('/')[0];
-                if (f.path.includes('/')) set.add(p);
-              });
-              suggestions = Array.from(set);
-            } else {
-              const base = current.endsWith('/') ? current : current + '/';
-              const set = new Set<string>();
-              files.forEach(f => {
-                if (f.path.startsWith(base)) {
-                  const rem = f.path.substring(base.length);
-                  const slashIndex = rem.indexOf('/');
-                  if (slashIndex !== -1) {
-                    const next = rem.substring(0, slashIndex);
-                    set.add(base + next);
-                  }
-                }
-              });
-              suggestions = Array.from(set);
-            }
-            const q = current.toLowerCase();
-            suggestions = suggestions
-              .filter(s => s.toLowerCase().includes(q))
-              .sort((a, b) => a.localeCompare(b))
-              .slice(0, 50);
-            // Clear existing suggestions
-            while (suggestEl.firstChild) {
-              suggestEl.removeChild(suggestEl.firstChild);
-            }
-            suggestions.forEach(sug => {
-              const item = suggestEl.createDiv({ cls: 'quicklink-suggestion-item', text: sug });
-              item.addEventListener('mousedown', async (e: MouseEvent) => {
-                e.preventDefault();
-                const allLines = input.value.split('\n');
-                allLines[parts.length - 1] = sug;
-                input.value = allLines.join('\n');
-                this.plugin.settings.mainPaths = allLines.filter(s => s.trim());
+            text.setValue(this.plugin.settings.mainPaths.join('\n'));
+            createFolderSuggest(text, 
+                (paths) => this.plugin.settings.mainPaths = paths
+            );
+            text.inputEl.addEventListener('blur', async () => {
+                const lines = text.inputEl.value.split('\n').map(s => normalizePath(s.trim())).filter(Boolean);
+                this.plugin.settings.mainPaths = lines;
                 await this.plugin.saveSettings();
-                // Clear existing suggestions
-                while (suggestEl.firstChild) {
-                  suggestEl.removeChild(suggestEl.firstChild);
-                }
-              });
             });
-          };
-          input.addEventListener('input', updateSuggestions);
-          input.addEventListener('focus', updateSuggestions);
-          input.addEventListener('blur', () => {
-            // Clear existing suggestions
-            while (suggestEl.firstChild) {
-              suggestEl.removeChild(suggestEl.firstChild);
-            }
-          });
         }
       );
 
     new Setting(containerEl)
-      .setName('Exclude Folders / 排除文件夹')
+      .setName('Exclude folders / 排除文件夹')
       .setDesc('Folders to exclude from search (one per line) / 排除搜索的文件夹（每行一个）')
       .addTextArea(text => {
-        const input = text.inputEl;
-        const wrapper = input.parentElement as HTMLElement;
-        wrapper.addClass('quicklink-wrapper');
-        const suggestEl = wrapper.createDiv();
-        suggestEl.addClass('quicklink-inline-suggestions');
-        const updateSuggestions = async () => {
-          const lines = input.value.split('\n').map(s => s.trim()).filter(Boolean);
-          this.plugin.settings.excludeFolders = lines;
-          await this.plugin.saveSettings();
-          const cursorPos = input.selectionStart || 0;
-          const before = input.value.substring(0, cursorPos);
-          const parts = before.split('\n');
-          const current = parts[parts.length - 1];
-          let suggestions: string[] = [];
-          const files = this.app.vault.getMarkdownFiles();
-          if (!current.includes('/')) {
-            const set = new Set<string>();
-            files.forEach(f => {
-              const p = f.path.split('/')[0];
-              if (f.path.includes('/')) set.add(p);
-            });
-            suggestions = Array.from(set);
-          } else {
-            const base = current.endsWith('/') ? current : current + '/';
-            const set = new Set<string>();
-            files.forEach(f => {
-              if (f.path.startsWith(base)) {
-                const rem = f.path.substring(base.length);
-                const slash = rem.indexOf('/');
-                if (slash !== -1) {
-                  const next = rem.substring(0, slash);
-                  set.add(base + next);
-                }
-              }
-            });
-            suggestions = Array.from(set);
-          }
-          const q = current.toLowerCase();
-          suggestions = suggestions
-            .filter(s => s.toLowerCase().includes(q))
-            .sort((a, b) => a.localeCompare(b))
-            .slice(0, 50);
-          // Clear existing suggestions
-          while (suggestEl.firstChild) {
-            suggestEl.removeChild(suggestEl.firstChild);
-          }
-          suggestions.forEach(sug => {
-            const item = suggestEl.createDiv({ cls: 'quicklink-suggestion-item', text: sug });
-            item.addEventListener('mousedown', async (e: MouseEvent) => {
-              e.preventDefault();
-              const all = input.value.split('\n');
-              all[parts.length - 1] = sug;
-              input.value = all.join('\n');
-              this.plugin.settings.excludeFolders = all.filter(s => s.trim());
-              await this.plugin.saveSettings();
-              // Clear existing suggestions
-              while (suggestEl.firstChild) {
-                suggestEl.removeChild(suggestEl.firstChild);
-              }
-            });
-            suggestEl.addEventListener('mouseleave', () => {
-              // Clear existing suggestions
-              while (suggestEl.firstChild) {
-                suggestEl.removeChild(suggestEl.firstChild);
-              }
-            });
-          });
-        };
-        input.addEventListener('input', updateSuggestions);
-        input.addEventListener('focus', updateSuggestions);
-        input.addEventListener('blur', () => {
-          // Clear existing suggestions
-          while (suggestEl.firstChild) {
-            suggestEl.removeChild(suggestEl.firstChild);
-          }
+        text.setValue(this.plugin.settings.excludeFolders.join('\n'));
+        createFolderSuggest(text,
+            (paths) => this.plugin.settings.excludeFolders = paths
+        );
+        text.inputEl.addEventListener('blur', async () => {
+            const lines = text.inputEl.value.split('\n').map(s => normalizePath(s.trim())).filter(Boolean);
+            this.plugin.settings.excludeFolders = lines;
+            await this.plugin.saveSettings();
         });
       });
 
     new Setting(containerEl)
-      .setName('Enable Advanced URI Integration / 启用高级 URI 集成')
-      .setDesc('If installed, new links will use Advanced URI format / 如果安装了此插件，生成高级 URI 格式的链接')
-      .addToggle(toggle =>
-        toggle
-          .setValue(this.plugin.settings.enableAdvancedUri)
-          .onChange(async value => {
-            this.plugin.settings.enableAdvancedUri = value;
-            await this.plugin.saveSettings();
-          })
-      );
+        .setName('Enable advanced URI integration / 启用高级 URI 集成')
+        .setDesc('Requires the "Advanced URI" plugin. / 需要 "Advanced URI" 插件。')
+        .addToggle(toggle =>
+            toggle
+                .setValue(this.plugin.settings.enableAdvancedUri)
+                .onChange(async value => {
+                    this.plugin.settings.enableAdvancedUri = value;
+                    await this.plugin.saveSettings();
+                    this.display(); // Rerender to show/hide the UID field
+                })
+        );
 
-    new Setting(containerEl)
-      .setName('UID Field Name / UID 字段名')
-      .setDesc('Frontmatter field name for UID used in Advanced URI / 用于 Advanced URI 的前置字段名')
-      .addText(text =>
-        text
-          .setPlaceholder('uid')
-          .setValue(this.plugin.settings.advancedUriField)
-          .onChange(async value => {
-            this.plugin.settings.advancedUriField = value.trim();
-            await this.plugin.saveSettings();
-          })
-      );
+    if (this.plugin.settings.enableAdvancedUri) {
+        new Setting(containerEl)
+            .setName('UID field name / UID 字段名')
+            .setDesc('The frontmatter field name for the unique ID. / 用于高级 URI 的前置元数据字段名。')
+            .addText(text =>
+                text
+                    .setValue(this.plugin.settings.advancedUriField)
+                    .onChange(async value => {
+                        this.plugin.settings.advancedUriField = value;
+                        await this.plugin.saveSettings();
+                    })
+            );
+    }
+    
+    new Setting(containerEl).setName('Custom rules / 自定义规则').setHeading();
 
-    containerEl.createEl('h3', { text: 'Custom Rules / 自定义规则' });
-
-    // Trigger Filter Rules 列表
     this.plugin.settings.triggerFilterRules.forEach((rule, index) => {
-      // Wrap each rule in a collapsible details element
-      const details = containerEl.createEl('details');
-      details.addClass('quicklink-rule-panel');
-      // Summary line shows rule number, prefix and name
-      const summary = details.createEl('summary', {
-        text: `Rule ${index + 1}: [${rule.prefix || '<未设置>'}] - ${rule.name || '<未命名>'}`
-      });
-      summary.addClass('quicklink-rule-summary');
-      // Container for rule settings
-      const ruleContainer = details.createDiv();
+        const details = containerEl.createEl('details');
+        details.addClass('quicklink-rule-panel');
 
-      // Prefix setting with delete button
-      new Setting(ruleContainer)
-        .setName('Prefix / 前缀')
-        .setDesc('触发规则前缀字符')
-        .addText(text =>
-          text
-            .setValue(rule.prefix)
-            .onChange(value => {
-              rule.prefix = value;
-            })
-        )
-        .addExtraButton(btn =>
-          btn.setIcon('trash')
-             .setTooltip('Delete / 删除')
-             .onClick(async () => {
-               this.plugin.settings.triggerFilterRules.splice(index, 1);
-               await this.plugin.saveSettings();
-               this.display();
-             })
-        );
+        const summary = details.createEl('summary');
+        summary.addClass('quicklink-rule-summary');
+        summary.setText(`Rule ${index + 1}: ${rule.name || 'New Rule'}`);
+        
+        const ruleContainer = details.createDiv();
 
-      // Name setting
-      new Setting(ruleContainer)
-        .setName('Name / 名称')
-        .setDesc('规则显示名称')
-        .addText(text =>
-          text
-            .setValue(rule.name)
-            .onChange(value => {
-              rule.name = value;
-            })
-        );
+        new Setting(ruleContainer)
+            .setName('Rule name / 规则名称')
+            .addText(text => {
+                text.setPlaceholder('Rule Name')
+                    .setValue(rule.name)
+                    .onChange(async (value) => {
+                    rule.name = value;
+                    await this.plugin.saveSettings();
+                    summary.setText(`Rule ${index + 1}: ${rule.name || 'New Rule'}`);
+                    });
+            });
 
-      // Include Folders
+        new Setting(ruleContainer)
+            .setName('Prefix / 前缀')
+            .addText(text => {
+                text.setPlaceholder('Prefix')
+                    .setValue(rule.prefix)
+                    .onChange(async (value) => {
+                    rule.prefix = value;
+                    await this.plugin.saveSettings();
+                    });
+            });
+
       new Setting(ruleContainer)
-        .setName('Include Folders / 包含文件夹')
-        .setDesc('仅在这些文件夹中搜索（每行一个）')
+        .setName('Include folders / 包含文件夹')
+        .setDesc('One folder per line / 每行一个文件夹')
         .addTextArea(text => {
-          const input = text.inputEl;
-          const wrapper = input.parentElement as HTMLElement;
-          wrapper.addClass('quicklink-wrapper');
-          const suggestEl = wrapper.createDiv();
-          suggestEl.addClass('quicklink-inline-suggestions');
-          const updateSuggestions = async () => {
-            const lines = input.value.split('\n').map(s => s.trim()).filter(Boolean);
+          text.setValue(rule.includeFolders.join('\n'));
+          createFolderSuggest(text,
+            (paths) => rule.includeFolders = paths
+          );
+          text.inputEl.addEventListener('blur', async () => {
+            const lines = text.inputEl.value.split('\n').map(s => normalizePath(s.trim())).filter(Boolean);
             rule.includeFolders = lines;
             await this.plugin.saveSettings();
-            const cursorPos = input.selectionStart || 0;
-            const before = input.value.substring(0, cursorPos);
-            const parts = before.split('\n');
-            const current = parts[parts.length - 1];
-            let suggestions: string[] = [];
-            const files = this.app.vault.getMarkdownFiles();
-            if (!current.includes('/')) {
-              const set = new Set<string>();
-              files.forEach(f => {
-                const p = f.path.split('/')[0];
-                if (f.path.includes('/')) set.add(p);
-              });
-              suggestions = Array.from(set);
-            } else {
-              const base = current.endsWith('/') ? current : current + '/';
-              const set = new Set<string>();
-              files.forEach(f => {
-                if (f.path.startsWith(base)) {
-                  const rem = f.path.substring(base.length);
-                  const slash = rem.indexOf('/');
-                  if (slash !== -1) {
-                    const next = rem.substring(0, slash);
-                    set.add(base + next);
-                  }
-                }
-              });
-              suggestions = Array.from(set);
-            }
-            const q = current.toLowerCase();
-            suggestions = suggestions
-              .filter(s => s.toLowerCase().includes(q))
-              .sort((a, b) => a.localeCompare(b))
-              .slice(0, 50);
-            // Clear existing suggestions
-            while (suggestEl.firstChild) {
-              suggestEl.removeChild(suggestEl.firstChild);
-            }
-            suggestions.forEach(sug => {
-              const item = suggestEl.createDiv({ cls: 'quicklink-suggestion-item', text: sug });
-              item.addEventListener('mousedown', async (e: MouseEvent) => {
-                e.preventDefault();
-                const all = input.value.split('\n');
-                all[parts.length - 1] = sug;
-                input.value = all.join('\n');
-                rule.includeFolders = all.filter(s => s.trim());
-                await this.plugin.saveSettings();
-                // Clear existing suggestions
-                while (suggestEl.firstChild) {
-                  suggestEl.removeChild(suggestEl.firstChild);
-                }
-              });
-              suggestEl.addEventListener('mouseleave', () => {
-                // Clear existing suggestions
-                while (suggestEl.firstChild) {
-                  suggestEl.removeChild(suggestEl.firstChild);
-                }
-              });
-            });
-          };
-          input.addEventListener('input', updateSuggestions);
-          input.addEventListener('focus', updateSuggestions);
-          input.addEventListener('blur', () => {
-            // Clear existing suggestions
-            while (suggestEl.firstChild) {
-              suggestEl.removeChild(suggestEl.firstChild);
-            }
           });
         });
 
-      // Name Filter Regex
       new Setting(ruleContainer)
-        .setName('Name Filter Regex / 文件名正则')
-        .setDesc('仅匹配符合此正则的文件名')
+        .setName('Name filter regex / 文件名正则')
         .addText(text =>
           text
             .setValue(rule.nameFilterRegex)
-            .onChange(value => {
+            .onChange(async value => {
               rule.nameFilterRegex = value;
+              await this.plugin.saveSettings();
             })
         );
-
-      // Include Tags
+      
       new Setting(ruleContainer)
-        .setName('Include Tags / 包含标签')
-        .setDesc('仅在包含这些标签的文件中搜索（每行一个）')
+        .setName('Include tags / 包含标签')
+        .setDesc('One tag per line, without # / 每行一个标签，无需#')
         .addTextArea(text => {
-          const input = text.inputEl;
-          const wrapper = input.parentElement as HTMLElement;
-          wrapper.addClass('quicklink-wrapper');
-          const suggestEl = wrapper.createDiv();
-          suggestEl.addClass('quicklink-inline-suggestions');
-          // Gather all unique tags in the vault
-          const allTags = Array.from(
-            new Set(
-              this.app.vault.getMarkdownFiles().flatMap(f => {
-                const cache = this.app.metadataCache.getFileCache(f);
-                return cache?.tags?.map(t => t.tag.startsWith('#') ? t.tag.substring(1) : t.tag) || [];
-              })
-            )
-          );
-          const updateSuggestions = async () => {
-            // Save current lines as includeTags
-            const lines = input.value.split('\n').map(s => s.trim()).filter(Boolean);
+          text.setValue(rule.includeTags.join('\n'));
+          text.inputEl.addEventListener('blur', async () => {
+            const lines = text.inputEl.value.split('\n').map(s => s.trim()).filter(Boolean);
             rule.includeTags = lines;
             await this.plugin.saveSettings();
-            const cursorPos = input.selectionStart || 0;
-            const before = input.value.substring(0, cursorPos);
-            const parts = before.split('\n');
-            const current = parts[parts.length - 1].toLowerCase();
-            // Filter and sort tags
-            const suggestions = allTags
-              .filter(tag => tag.toLowerCase().includes(current))
-              .sort((a, b) => a.localeCompare(b))
-              .slice(0, 50);
-            // Clear existing suggestions
-            while (suggestEl.firstChild) {
-              suggestEl.removeChild(suggestEl.firstChild);
-            }
-            suggestions.forEach(tag => {
-              const item = suggestEl.createDiv({ cls: 'quicklink-suggestion-item', text: tag });
-              item.addEventListener('mousedown', async (e: MouseEvent) => {
-                e.preventDefault();
-                // Replace current line with selected tag
-                const allLines = input.value.split('\n');
-                allLines[parts.length - 1] = tag;
-                input.value = allLines.join('\n');
-                rule.includeTags = allLines.filter(s => s.trim());
-                await this.plugin.saveSettings();
-                // Clear existing suggestions
-                while (suggestEl.firstChild) {
-                  suggestEl.removeChild(suggestEl.firstChild);
-                }
-              });
-            });
-          };
-          input.addEventListener('input', updateSuggestions);
-          input.addEventListener('focus', updateSuggestions);
-          input.addEventListener('blur', () => {
-            // Clear existing suggestions
-            while (suggestEl.firstChild) {
-              suggestEl.removeChild(suggestEl.firstChild);
-            }
           });
         });
 
-      // Save Rule button
       new Setting(ruleContainer)
-        .addButton(btn =>
-          btn
-            .setButtonText('Save Rule / 保存规则')
-            .setCta()
+        .addButton(button => {
+          button.setButtonText('Delete rule / 删除规则')
+            .setWarning()
             .onClick(async () => {
+              this.plugin.settings.triggerFilterRules.splice(index, 1);
               await this.plugin.saveSettings();
-              new Notice(`Saved rule ${rule.prefix || '(no prefix)'}`);
-            })
-        );
+              this.display();
+            });
+        });
     });
-    // 添加新规则按钮
+
     new Setting(containerEl)
       .addButton(button =>
-        button.setButtonText('Add Rule / 添加规则')
-              .onClick(async () => {
-                this.plugin.settings.triggerFilterRules.push({
-                  prefix: '',
-                  name: '',
-                  includeFolders: [],
-                  nameFilterRegex: '',
-                  includeTags: []
-                });
-                await this.plugin.saveSettings();
-                this.display();
-              })
+        button
+          .setButtonText('Add rule / 添加规则')
+          .onClick(async () => {
+            this.plugin.settings.triggerFilterRules.push({
+              prefix: '',
+              name: '',
+              includeFolders: [],
+              nameFilterRegex: '',
+              includeTags: []
+            });
+            await this.plugin.saveSettings();
+            this.display();
+          })
       );
-    // UID Management section removed
   }
 }
 
@@ -583,7 +476,6 @@ class FileSuggest extends EditorSuggest<{ label: string; file: TFile; path: stri
   constructor(app: App, plugin: QuickLinkPlugin) {
     super(app);
     this.plugin = plugin;
-    console.log('QuickLink: FileSuggest initialized');
   }
 
   getSuggestions(context: EditorSuggestContext): { label: string; file: TFile; path: string }[] {
@@ -591,14 +483,12 @@ class FileSuggest extends EditorSuggest<{ label: string; file: TFile; path: stri
     const rawQuery = context.query;
     const fullQuery = rawQuery.trimStart();
     const globalTrigger = this.plugin.settings.autocompleteTriggerPhrase;
-    console.log(`QuickLink getSuggestions: fullQuery='${fullQuery}', rules=${JSON.stringify(this.plugin.settings.triggerFilterRules)}`);
     // 全局排除文件夹
     let files = this.app.vault.getMarkdownFiles()
-      .filter(f => !this.plugin.settings.excludeFolders.some(folder => f.path.startsWith(folder + '/')));
+      .filter(f => !this.plugin.settings.excludeFolders.some(folder => f.path.startsWith(normalizePath(folder) + '/')));
 
     // 解析触发规则
     const rule = this.plugin.settings.triggerFilterRules.find(r => r.prefix.length > 0 && fullQuery.startsWith(r.prefix));
-    console.log(`QuickLink matched rule: ${rule ? rule.prefix : 'none'}`);
     // 去掉前缀后的实际查询，并去除两侧空白
     const actualQuery = rule
       ? fullQuery.slice(rule.prefix.length).trim()
@@ -607,28 +497,29 @@ class FileSuggest extends EditorSuggest<{ label: string; file: TFile; path: stri
     // 应用规则过滤
     if (rule) {
       if (rule.includeFolders.length) {
-        files = files.filter(f => rule.includeFolders.some(folder => f.path.startsWith(folder + '/')));
+        files = files.filter(f => rule.includeFolders.some(folder => f.path.startsWith(normalizePath(folder) + '/')));
       }
       if (rule.nameFilterRegex) {
-        const regex = new RegExp(rule.nameFilterRegex);
-        files = files.filter(f => regex.test(f.basename));
+        try {
+            const regex = new RegExp(rule.nameFilterRegex);
+            files = files.filter(f => regex.test(f.basename));
+        } catch (e) {
+            // ignore invalid regex
+        }
       }
       // tag 过滤（忽略 '#', 匹配用户输入的标签）
       if (rule.includeTags && rule.includeTags.length) {
         files = files.filter(f => {
           const cache = this.app.metadataCache.getFileCache(f);
-          if (!cache?.tags) return false;
-          return cache.tags!.some(t => {
-            // strip leading '#' if present
-            const tagName = t.tag.startsWith('#') ? t.tag.substring(1) : t.tag;
-            return rule.includeTags.includes(tagName);
-          });
+          if (!cache) return false;
+          const allTags = getAllTags(cache) || [];
+          return allTags.some(tag => rule.includeTags.includes(tag.substring(1)));
         });
       }
     }
     if (!rule && this.plugin.settings.mainPaths?.length) {
       files = files.filter(f =>
-        this.plugin.settings.mainPaths.some(p => f.path.startsWith(p + '/'))
+        this.plugin.settings.mainPaths.some(p => f.path.startsWith(normalizePath(p) + '/'))
       );
     }
 
@@ -654,9 +545,9 @@ class FileSuggest extends EditorSuggest<{ label: string; file: TFile; path: stri
     evt: MouseEvent
   ): Promise<void> {
     if (!this.context) return;
-    const { editor, start, end } = this.context as EditorSuggestContext;
+    const { editor, start, end, file } = this.context as EditorSuggestContext;
     const alias = evt.shiftKey ? this.context.query : undefined;
-    const link = await generateMarkdownLink(this.app, sug.file, alias, this.plugin);
+    const link = await generateMarkdownLink(this.app, sug.file, file.path, alias, this.plugin);
     editor.replaceRange(link, start, end);
   }
 
@@ -691,7 +582,6 @@ class FileSuggest extends EditorSuggest<{ label: string; file: TFile; path: stri
     const end = position;
     // 返回包含前缀或全局触发符在内的 query
     const query = line.substring(idx, position.ch);
-    console.log(`QuickLink onTrigger: detected query='${query}', usedTrigger='${usedTrigger}'`);
     return { editor, file, start, end, query };
   }
 }
@@ -706,8 +596,22 @@ export default class QuickLinkPlugin extends Plugin {
     this.addSettingTab(new SettingsTab(this.app, this));
     this.suggest = new FileSuggest(this.app, this);
     this.registerEditorSuggest(this.suggest);
-    this.addRibbonIcon('link-2', 'Auto Link Scan / 自动扫描', () => {
+    this.addRibbonIcon('link-2', 'Auto Link Scan', () => {
       this.runAutoScan();
+    });
+    this.addCommand({
+        id: 'run-auto-scan',
+        name: 'Auto link scan in current file',
+        checkCallback: (checking: boolean) => {
+            const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+            if (view) {
+                if (!checking) {
+                    this.runAutoScan();
+                }
+                return true;
+            }
+            return false;
+        }
     });
   }
 
@@ -717,40 +621,38 @@ export default class QuickLinkPlugin extends Plugin {
   async runAutoScan(): Promise<void> {
     const view = this.app.workspace.getActiveViewOfType(MarkdownView);
     if (!view || !view.file) {
-      new Notice('请在 Markdown 视图中使用此功能');
+      new Notice('Please use this feature in a Markdown view');
       return;
     }
     const file = view.file;
-    const content = await this.app.vault.read(file);
     let targets = this.app.vault.getMarkdownFiles();
     if (this.settings.mainPaths?.length) {
       targets = targets.filter(f =>
-        this.settings.mainPaths.some(p => f.path.startsWith(p + '/'))
+        this.settings.mainPaths.some(p => f.path.startsWith(normalizePath(p) + '/'))
       );
     }
-    console.log('QuickLink runAutoScan: target files:', targets.map(f => f.path));
-    let newContent = content;
     let totalCount = 0;
-    for (const tf of targets) {
-      console.log(`QuickLink runAutoScan: scanning file basename='${tf.basename}' path='${tf.path}'`);
-      const name = tf.basename;
-      // Match whole name with non-word boundary, supporting Chinese
-      const pattern = `(^|\\W)${escapeRegExp(name)}(?=\\W|$)`;
-      const regex = new RegExp(pattern, 'g');
-      // Find matches on the current newContent
-      const matches = newContent.match(regex);
-      if (matches && matches.length > 0) {
-        console.log(`QuickLink runAutoScan: found ${matches.length} matches for '${name}'`);
-        totalCount += matches.length;
-        const linkText = await generateMarkdownLink(this.app, tf, undefined, this);
-        console.log(`QuickLink runAutoScan: linkText='${linkText}'`);
-        // Replace occurrences, preserving preceding character
-        newContent = newContent.replace(regex, (_match, p1) => `${p1}${linkText}`);
-      }
-    }
-    console.log(`QuickLink runAutoScan: total replacements to apply: ${totalCount}`);
-    await this.app.vault.modify(file, newContent);
-    new Notice(`自动扫描完成，已链接 ${totalCount} 处`);
+
+    await this.app.vault.process(file, (content) => {
+        let newContent = content;
+        for (const tf of targets) {
+            const name = tf.basename;
+            // Match whole name with non-word boundary, supporting Chinese
+            const pattern = `(^|\\W)${escapeRegExp(name)}(?=\\W|$)`;
+            const regex = new RegExp(pattern, 'g');
+            // Find matches on the current newContent
+            const matches = newContent.match(regex);
+            if (matches && matches.length > 0) {
+                totalCount += matches.length;
+                const linkText = this.app.fileManager.generateMarkdownLink(tf, file.path, undefined, name);
+                // Replace occurrences, preserving preceding character
+                newContent = newContent.replace(regex, (_match, p1) => `${p1}${linkText}`);
+            }
+        }
+        return newContent;
+    });
+
+    new Notice(`Auto scan complete. ${totalCount} links were created.`);
   }
 
   async loadSettings() {
