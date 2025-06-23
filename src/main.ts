@@ -69,7 +69,7 @@ async function generateMarkdownLink(
   const fileName = file.basename;
 
   // Advanced URI 逻辑
-  if (plugin.settings.enableAdvancedUri && (app as any).plugins.plugins['obsidian-advanced-uri']) {
+  if (plugin.settings.enableAdvancedUri && (app as any).plugins.enabledPlugins.has('obsidian-advanced-uri')) {
     const vaultName = app.vault.getName();
     const fieldName = plugin.settings.advancedUriField;
     let uid: string | null = null;
@@ -148,6 +148,7 @@ class SettingsTab extends PluginSettingTab {
 
     const createFolderSuggest = (textArea: TextAreaComponent, setPaths: (paths: string[]) => void) => {
         const input = textArea.inputEl;
+        input.parentElement?.addClass('quicklink-folder-input-container');
         let suggestEl: HTMLElement | null = null;
         let suggestions: string[] = [];
         let selectedIndex = 0;
@@ -156,19 +157,21 @@ class SettingsTab extends PluginSettingTab {
         const showSuggestions = () => {
             if (!suggestEl) {
                 suggestEl = input.parentElement?.createDiv({ cls: 'suggestion-container' }) || null;
-                if (suggestEl) {
-                    suggestEl.style.top = `${input.offsetTop + input.offsetHeight}px`;
-                    suggestEl.style.left = `${input.offsetLeft}px`;
-                    suggestEl.style.width = `${input.offsetWidth}px`;
-                }
             }
             if (!suggestEl || suggestions.length === 0) {
                 hideSuggestions();
                 return;
             }
+
+            const parent = suggestEl.parentElement;
+            if (parent) {
+                parent.style.setProperty('--suggestion-top', `${input.offsetTop + input.offsetHeight}px`);
+                parent.style.setProperty('--suggestion-left', `${input.offsetLeft}px`);
+                parent.style.setProperty('--suggestion-width', `${input.offsetWidth}px`);
+            }
     
             suggestEl.empty();
-            suggestEl.style.display = 'block';
+            suggestEl.addClass('is-active');
             isActive = true;
     
             suggestions.forEach((sug, i) => {
@@ -185,7 +188,7 @@ class SettingsTab extends PluginSettingTab {
     
         const hideSuggestions = () => {
             if (suggestEl) {
-                suggestEl.style.display = 'none';
+                suggestEl.removeClass('is-active');
             }
             isActive = false;
             selectedIndex = 0;

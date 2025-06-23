@@ -1,0 +1,39 @@
+.quicklink-folder-input-container {
+    position: relative;
+}
+
+.suggestion-container {
+    position: absolute;
+    top: var(--suggestion-top);
+    left: var(--suggestion-left);
+    width: var(--suggestion-width);
+    background-color: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    box-shadow: var(--shadow-l);
+    z-index: 100;
+    display: none;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.suggestion-container.is-active {
+    display: block;
+}
+
+.suggestion-item {
+    padding: var(--size-2-2) var(--size-4-2);
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.suggestion-item:hover {
+    background-color: var(--background-modifier-hover);
+}
+
+.suggestion-item.is-selected {
+    background-color: var(--background-modifier-success);
+    color: var(--text-on-accent);
+} 

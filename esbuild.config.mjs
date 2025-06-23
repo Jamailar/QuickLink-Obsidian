@@ -1,6 +1,7 @@
 import esbuild from "esbuild";
 import process from "process";
 import builtins from "builtin-modules";
+import fs from "fs/promises";
 
 const banner =
 `/*
@@ -10,6 +11,16 @@ if you want to view the source, please visit the github repository of this plugi
 `;
 
 const prod = (process.argv[2] === "production");
+
+const copyPlugin = {
+	name: 'copy-static-files',
+	setup(build) {
+		build.onEnd(async () => {
+			await fs.copyFile('manifest.json', 'dist/manifest.json');
+			await fs.copyFile('styles.css', 'dist/styles.css');
+		});
+	},
+};
 
 const context = await esbuild.context({
 	banner: {
@@ -39,6 +50,7 @@ const context = await esbuild.context({
 	treeShaking: true,
 	outfile: "dist/main.js",
 	minify: prod,
+	plugins: [copyPlugin],
 });
 
 if (prod) {
