@@ -148,6 +148,7 @@ class SettingsTab extends PluginSettingTab {
 
     const createFolderSuggest = (textArea: TextAreaComponent, setPaths: (paths: string[]) => void) => {
         const input = textArea.inputEl;
+        input.parentElement?.addClass('quicklink-folder-input-container');
         let suggestEl: HTMLElement | null = null;
         let suggestions: string[] = [];
         let selectedIndex = 0;
@@ -155,24 +156,24 @@ class SettingsTab extends PluginSettingTab {
     
         const showSuggestions = () => {
             if (!suggestEl) {
-                suggestEl = input.parentElement?.createDiv({ cls: 'suggestion-container' }) || null;
-                if (suggestEl) {
-                    suggestEl.style.top = `${input.offsetTop + input.offsetHeight}px`;
-                    suggestEl.style.left = `${input.offsetLeft}px`;
-                    suggestEl.style.width = `${input.offsetWidth}px`;
-                }
+                suggestEl = input.parentElement?.createDiv({ cls: 'quicklink-suggestion-container' }) || null;
             }
             if (!suggestEl || suggestions.length === 0) {
                 hideSuggestions();
                 return;
             }
-    
+            // 只通过CSS变量设置定位和宽度
+            const parent = suggestEl.parentElement;
+            if (parent) {
+                parent.style.setProperty('--suggestion-top', `${input.offsetTop + input.offsetHeight}px`);
+                parent.style.setProperty('--suggestion-left', `${input.offsetLeft}px`);
+                parent.style.setProperty('--suggestion-width', `${input.offsetWidth}px`);
+            }
             suggestEl.empty();
-            suggestEl.style.display = 'block';
+            suggestEl.addClass('is-active');
             isActive = true;
-    
             suggestions.forEach((sug, i) => {
-                const item = suggestEl!.createDiv({ cls: 'suggestion-item', text: sug });
+                const item = suggestEl!.createDiv({ cls: 'quicklink-suggestion-item', text: sug });
                 if (i === selectedIndex) {
                     item.addClass('is-selected');
                 }
@@ -185,7 +186,7 @@ class SettingsTab extends PluginSettingTab {
     
         const hideSuggestions = () => {
             if (suggestEl) {
-                suggestEl.style.display = 'none';
+                suggestEl.removeClass('is-active');
             }
             isActive = false;
             selectedIndex = 0;
@@ -476,9 +477,11 @@ class FileSuggest extends EditorSuggest<{ label: string; file: TFile; path: stri
   constructor(app: App, plugin: QuickLinkPlugin) {
     super(app);
     this.plugin = plugin;
+    console.log('QuickLink: FileSuggest constructor');
   }
 
   getSuggestions(context: EditorSuggestContext): { label: string; file: TFile; path: string }[] {
+    console.log('QuickLink: getSuggestions called', context.query);
     // 取出输入内容并去掉前导空白字符
     const rawQuery = context.query;
     const fullQuery = rawQuery.trimStart();
@@ -530,10 +533,13 @@ class FileSuggest extends EditorSuggest<{ label: string; file: TFile; path: stri
     }
 
     // 限制返回数量
-    return files.slice(0, 50).map(f => ({ label: f.basename, file: f, path: f.path }));
+    const result = files.slice(0, 50).map(f => ({ label: f.basename, file: f, path: f.path }));
+    console.log('QuickLink: getSuggestions result', result);
+    return result;
   }
 
   renderSuggestion(sug: { label: string; file: TFile; path: string }, el: HTMLElement): void {
+    console.log('QuickLink: renderSuggestion', sug.label);
     el.setText(sug.label);
     const parts = sug.path.split('/');
     parts.pop();
@@ -544,6 +550,7 @@ class FileSuggest extends EditorSuggest<{ label: string; file: TFile; path: stri
     sug: { label: string; file: TFile; path: string },
     evt: MouseEvent
   ): Promise<void> {
+    console.log('QuickLink: selectSuggestion', sug.label);
     if (!this.context) return;
     const { editor, start, end, file } = this.context as EditorSuggestContext;
     const alias = evt.shiftKey ? this.context.query : undefined;
@@ -552,6 +559,7 @@ class FileSuggest extends EditorSuggest<{ label: string; file: TFile; path: stri
   }
 
   onTrigger(cursor: EditorPosition, editor: Editor, file: TFile): EditorSuggestContext | null {
+    console.log('QuickLink: onTrigger called');
     if (!this.plugin.settings.isAutosuggestEnabled) return null;
     const position = editor.getCursor();
     const line = editor.getLine(position.line);
@@ -582,6 +590,7 @@ class FileSuggest extends EditorSuggest<{ label: string; file: TFile; path: stri
     const end = position;
     // 返回包含前缀或全局触发符在内的 query
     const query = line.substring(idx, position.ch);
+    console.log('QuickLink: onTrigger matched', { usedTrigger, query });
     return { editor, file, start, end, query };
   }
 }
@@ -592,10 +601,13 @@ export default class QuickLinkPlugin extends Plugin {
   suggest: FileSuggest;
 
   async onload() {
+    console.log('QuickLink: onload called');
     await this.loadSettings();
     this.addSettingTab(new SettingsTab(this.app, this));
     this.suggest = new FileSuggest(this.app, this);
+    console.log('QuickLink: FileSuggest instance created');
     this.registerEditorSuggest(this.suggest);
+    console.log('QuickLink: registerEditorSuggest called');
     this.addRibbonIcon('link-2', 'Auto Link Scan', () => {
       this.runAutoScan();
     });

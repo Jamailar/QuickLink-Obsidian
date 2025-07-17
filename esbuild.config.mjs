@@ -1,6 +1,8 @@
 import esbuild from "esbuild";
 import process from "process";
 import builtins from "builtin-modules";
+import fs from "fs/promises";
+import path from "path";
 
 const banner =
 `/*
@@ -10,6 +12,27 @@ if you want to view the source, please visit the github repository of this plugi
 `;
 
 const prod = (process.argv[2] === "production");
+
+const copyPlugin = {
+	name: 'copy-static-files',
+	setup(build) {
+		build.onEnd(async () => {
+			// 读取并修正 manifest.json
+			const manifestPath = path.resolve('manifest.json');
+			const distManifestPath = path.resolve('dist/manifest.json');
+			const manifestRaw = await fs.readFile(manifestPath, 'utf-8');
+			const manifest = JSON.parse(manifestRaw);
+			manifest.main = "main.js";
+			await fs.writeFile(distManifestPath, JSON.stringify(manifest, null, 2), 'utf-8');
+			// 复制 styles.css
+			try {
+				await fs.copyFile('styles.css', 'dist/styles.css');
+			} catch (e) {
+				console.warn('styles.css not found, skip copy.');
+			}
+		});
+	},
+};
 
 const context = await esbuild.context({
 	banner: {
@@ -39,6 +62,7 @@ const context = await esbuild.context({
 	treeShaking: true,
 	outfile: "dist/main.js",
 	minify: prod,
+	plugins: [copyPlugin],
 });
 
 if (prod) {
