@@ -69,7 +69,8 @@ async function generateMarkdownLink(
   const fileName = file.basename;
 
   // Advanced URI 逻辑
-  if (plugin.settings.enableAdvancedUri && (app as any).plugins.plugins['obsidian-advanced-uri']) {
+  if (plugin.settings.enableAdvancedUri) {
+    // 尝试使用 Advanced URI，如果失败则回退到普通链接
     const vaultName = app.vault.getName();
     const fieldName = plugin.settings.advancedUriField;
     let uid: string | null = null;
@@ -161,13 +162,6 @@ class SettingsTab extends PluginSettingTab {
             if (!suggestEl || suggestions.length === 0) {
                 hideSuggestions();
                 return;
-            }
-            // 只通过CSS变量设置定位和宽度
-            const parent = suggestEl.parentElement;
-            if (parent) {
-                parent.style.setProperty('--suggestion-top', `${input.offsetTop + input.offsetHeight}px`);
-                parent.style.setProperty('--suggestion-left', `${input.offsetLeft}px`);
-                parent.style.setProperty('--suggestion-width', `${input.offsetWidth}px`);
             }
             suggestEl.empty();
             suggestEl.addClass('is-active');

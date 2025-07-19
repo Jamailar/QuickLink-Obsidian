@@ -4,9 +4,9 @@
 
 .quicklink-suggestion-container {
     position: absolute;
-    top: var(--suggestion-top, 100%);
-    left: var(--suggestion-left, 0);
-    width: var(--suggestion-width, 100%);
+    top: 100%;
+    left: 0;
+    right: 0;
     background-color: var(--background-secondary);
     border: 1px solid var(--background-modifier-border);
     border-radius: var(--radius-m);
@@ -36,4 +36,22 @@
 .quicklink-suggestion-item.is-selected {
     background-color: var(--background-modifier-success);
     color: var(--text-on-accent);
-} 
+}
+
+.quicklink-rule-panel {
+    margin: var(--size-4-2) 0;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    padding: var(--size-4-2);
+}
+
+.quicklink-rule-summary {
+    cursor: pointer;
+    font-weight: 600;
+    padding: var(--size-2-2) 0;
+}
+
+.suggestion-note {
+    color: var(--text-muted);
+    font-size: 0.9em;
+}
