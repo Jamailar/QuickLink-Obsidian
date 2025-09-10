@@ -1,4 +1,4 @@
-import { App, Plugin, PluginSettingTab, Setting, Notice, EditorSuggest, TFile, EditorSuggestContext, EditorPosition, Editor, SuggestModal, TextAreaComponent, MarkdownView, normalizePath, getAllTags, FileManager, HeadingCache, TFolder } from 'obsidian';
+import { App, Plugin, PluginSettingTab, Setting, Notice, EditorSuggest, TFile, EditorSuggestContext, EditorPosition, Editor, SuggestModal, TextAreaComponent, MarkdownView, normalizePath, getAllTags, FileManager, HeadingCache, TFolder, AbstractInputSuggest } from 'obsidian';
 
 /** 单个触发规则定义 */
 interface TriggerFilterRule {
@@ -7,6 +7,102 @@ interface TriggerFilterRule {
   includeFolders: string[];      // 仅在这些文件夹中搜索
   nameFilterRegex: string;       // 对文件名的正则过滤
   includeTags: string[];         // 仅在包含这些标签的文件中搜索
+}
+
+/** 国际化文本 */
+interface I18nTexts {
+  enableSuggestions: string;
+  enableSuggestionsDesc: string;
+  triggerCharacter: string;
+  triggerCharacterDesc: string;
+  mainFolders: string;
+  mainFoldersDesc: string;
+  excludeFolders: string;
+  excludeFoldersDesc: string;
+  enableAdvancedUri: string;
+  enableAdvancedUriDesc: string;
+  uidFieldName: string;
+  uidFieldNameDesc: string;
+  customRules: string;
+  ruleName: string;
+  prefix: string;
+  includeFolders: string;
+  includeFoldersDesc: string;
+  nameFilterRegex: string;
+  includeTags: string;
+  includeTagsDesc: string;
+  deleteRule: string;
+  addRule: string;
+  autoLinkScan: string;
+  autoLinkScanCurrentFile: string;
+  ruleNamePlaceholder: string;
+  prefixPlaceholder: string;
+}
+
+/** 获取国际化文本 */
+function getI18nTexts(app: App): I18nTexts {
+  const language = (app as any).getLanguage?.() || 'en';
+  
+  const texts: Record<string, I18nTexts> = {
+    'zh': {
+      enableSuggestions: '启用建议',
+      enableSuggestionsDesc: '使用触发字符建议文件',
+      triggerCharacter: '触发字符',
+      triggerCharacterDesc: '触发文件建议的字符',
+      mainFolders: '主体文件夹',
+      mainFoldersDesc: '设置该文件夹用于自动扫描文档进行自动连接创建。使用全局触发符时，仅在这些文件夹中搜索（留空表示全局）。',
+      excludeFolders: '排除文件夹',
+      excludeFoldersDesc: '排除搜索的文件夹（每行一个）',
+      enableAdvancedUri: '启用高级 URI 集成',
+      enableAdvancedUriDesc: '需要 "Advanced URI" 插件。',
+      uidFieldName: 'UID 字段名',
+      uidFieldNameDesc: '用于高级 URI 的前置元数据字段名。',
+      customRules: '自定义规则',
+      ruleName: '规则名称',
+      prefix: '前缀',
+      includeFolders: '包含文件夹',
+      includeFoldersDesc: '每行一个文件夹',
+      nameFilterRegex: '文件名正则',
+      includeTags: '包含标签',
+      includeTagsDesc: '每行一个标签，无需#',
+      deleteRule: '删除规则',
+      addRule: '添加规则',
+      autoLinkScan: '自动链接扫描',
+      autoLinkScanCurrentFile: '在当前文件中自动链接扫描',
+      ruleNamePlaceholder: '规则名称',
+      prefixPlaceholder: '前缀'
+    },
+    'en': {
+      enableSuggestions: 'Enable suggestions',
+      enableSuggestionsDesc: 'Trigger on character to suggest files',
+      triggerCharacter: 'Trigger character',
+      triggerCharacterDesc: 'Character that will trigger file suggestions',
+      mainFolders: 'Main folders',
+      mainFoldersDesc: 'Set these folders for auto-linking. When using the global trigger, search will be limited to these folders (leave empty for global search).',
+      excludeFolders: 'Exclude folders',
+      excludeFoldersDesc: 'Folders to exclude from search (one per line)',
+      enableAdvancedUri: 'Enable advanced URI integration',
+      enableAdvancedUriDesc: 'Requires the "Advanced URI" plugin.',
+      uidFieldName: 'UID field name',
+      uidFieldNameDesc: 'The frontmatter field name for the unique ID.',
+      customRules: 'Custom rules',
+      ruleName: 'Rule name',
+      prefix: 'Prefix',
+      includeFolders: 'Include folders',
+      includeFoldersDesc: 'One folder per line',
+      nameFilterRegex: 'Name filter regex',
+      includeTags: 'Include tags',
+      includeTagsDesc: 'One tag per line, without #',
+      deleteRule: 'Delete rule',
+      addRule: 'Add rule',
+      autoLinkScan: 'Auto link scan',
+      autoLinkScanCurrentFile: 'Auto link scan in current file',
+      ruleNamePlaceholder: 'Rule name',
+      prefixPlaceholder: 'Prefix'
+    }
+  };
+  
+  return texts[language] || texts['en'];
 }
 
 // 更新插件设置类型
@@ -31,13 +127,10 @@ const DEFAULT_SETTINGS: QuickLinkSettings = {
   advancedUriField: 'uid',
 };
 
-/** FolderSuggestModal for inline folder suggestions */
-class FolderSuggestModal extends SuggestModal<string> {
-  onChooseSuggestion: (suggestion: string) => void;
-
-  constructor(app: App, onChooseSuggestion: (suggestion: string) => void) {
-    super(app);
-    this.onChooseSuggestion = onChooseSuggestion;
+/** FolderSuggest for inline folder suggestions using AbstractInputSuggest */
+class FolderSuggest extends AbstractInputSuggest<string> {
+  constructor(inputEl: HTMLInputElement | HTMLDivElement, public app: App) {
+    super(app, inputEl);
   }
 
   getSuggestions(query: string): string[] {
@@ -52,8 +145,8 @@ class FolderSuggestModal extends SuggestModal<string> {
     el.setText(suggestion);
   }
 
-  onChooseSuggestionItem(suggestion: string, evt: MouseEvent | KeyboardEvent): void {
-    this.onChooseSuggestion(suggestion);
+  selectSuggestion(suggestion: string): void {
+    // This will be handled by the parent class
   }
 }
 
@@ -118,10 +211,11 @@ class SettingsTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
+    const i18n = getI18nTexts(this.app);
 
     new Setting(containerEl)
-      .setName('Enable suggestions / 启用建议')
-      .setDesc(`Trigger on '${this.plugin.settings.autocompleteTriggerPhrase}' to suggest files / 使用 '${this.plugin.settings.autocompleteTriggerPhrase}' 触发文件建议`)
+      .setName(i18n.enableSuggestions)
+      .setDesc(`${i18n.enableSuggestionsDesc} '${this.plugin.settings.autocompleteTriggerPhrase}'`)
       .addToggle(toggle =>
         toggle
           .setValue(this.plugin.settings.isAutosuggestEnabled)
@@ -134,8 +228,8 @@ class SettingsTab extends PluginSettingTab {
 
     if (this.plugin.settings.isAutosuggestEnabled) {
       new Setting(containerEl)
-        .setName('Trigger character / 触发字符')
-        .setDesc('Character that will trigger file suggestions / 触发文件建议的字符')
+        .setName(i18n.triggerCharacter)
+        .setDesc(i18n.triggerCharacterDesc)
         .addText(text =>
           text
             .setValue(this.plugin.settings.autocompleteTriggerPhrase)
@@ -150,56 +244,20 @@ class SettingsTab extends PluginSettingTab {
     const createFolderSuggest = (textArea: TextAreaComponent, setPaths: (paths: string[]) => void) => {
         const input = textArea.inputEl;
         input.parentElement?.addClass('quicklink-folder-input-container');
-        let suggestEl: HTMLElement | null = null;
-        let suggestions: string[] = [];
-        let selectedIndex = 0;
-        let isActive = false;
-    
-        const showSuggestions = () => {
-            if (!suggestEl) {
-                suggestEl = input.parentElement?.createDiv({ cls: 'quicklink-suggestion-container' }) || null;
-            }
-            if (!suggestEl || suggestions.length === 0) {
-                hideSuggestions();
-                return;
-            }
-            suggestEl.empty();
-            suggestEl.addClass('is-active');
-            isActive = true;
-            suggestions.forEach((sug, i) => {
-                const item = suggestEl!.createDiv({ cls: 'quicklink-suggestion-item', text: sug });
-                if (i === selectedIndex) {
-                    item.addClass('is-selected');
-                }
-                item.addEventListener('mousedown', async (e) => {
-                    e.preventDefault();
-                    await selectSuggestion(i);
-                });
-            });
-        };
-    
-        const hideSuggestions = () => {
-            if (suggestEl) {
-                suggestEl.removeClass('is-active');
-            }
-            isActive = false;
-            selectedIndex = 0;
-        };
-    
-        const selectSuggestion = async (index: number) => {
-            if (index < 0 || index >= suggestions.length) return;
-    
-            const selected = suggestions[index];
+        
+        // 使用 AbstractInputSuggest
+        const folderSuggest = new FolderSuggest(input as unknown as HTMLInputElement, this.app);
+        
+        // 重写 selectSuggestion 方法以处理多行文本
+        folderSuggest.selectSuggestion = async (suggestion: string) => {
             const lines = input.value.split('\n');
             const { currentLineIndex } = getActiveLine(input);
-    
+            
             if (currentLineIndex === -1) {
-                hideSuggestions();
                 return;
             }
             
-            lines[currentLineIndex] = selected;
-            
+            lines[currentLineIndex] = suggestion;
             const newValue = lines.join('\n');
             
             const newPaths = lines.map(l => normalizePath(l.trim())).filter(Boolean);
@@ -214,8 +272,6 @@ class SettingsTab extends PluginSettingTab {
             }
             newCursorPos += lines[currentLineIndex].length;
             input.setSelectionRange(newCursorPos, newCursorPos);
-    
-            hideSuggestions();
         };
         
         const getActiveLine = (el: HTMLTextAreaElement): { currentLineIndex: number, currentLine: string } => {
@@ -231,8 +287,9 @@ class SettingsTab extends PluginSettingTab {
             }
             return { currentLineIndex: -1, currentLine: '' };
         };
-    
-        const updateSuggestions = () => {
+        
+        // 重写 getSuggestions 方法以处理多行文本
+        folderSuggest.getSuggestions = (query: string) => {
             const { currentLine } = getActiveLine(input);
             const lowerCurrentLine = currentLine.toLowerCase();
 
@@ -257,53 +314,16 @@ class SettingsTab extends PluginSettingTab {
                 }
             }
 
-            suggestions = Array.from(children)
+            return Array.from(children)
                 .filter(child => child.toLowerCase().substring(lastSlashIndex + 1).includes(searchFragment))
                 .sort()
                 .slice(0, 10);
-            
-            if (suggestions.length > 0 && !(suggestions.length === 1 && suggestions[0].toLowerCase() === lowerCurrentLine.trim())) {
-                 selectedIndex = 0;
-                 showSuggestions();
-            } else {
-                 hideSuggestions();
-            }
         };
-    
-        input.addEventListener('keydown', async (e: KeyboardEvent) => {
-            if (!isActive) return;
-    
-            if (e.key === 'ArrowDown') {
-                e.preventDefault();
-                selectedIndex = (selectedIndex + 1) % suggestions.length;
-                showSuggestions();
-            } else if (e.key === 'ArrowUp') {
-                e.preventDefault();
-                selectedIndex = (selectedIndex - 1 + suggestions.length) % suggestions.length;
-                showSuggestions();
-            } else if (e.key === 'Enter' || e.key === 'Tab') {
-                e.preventDefault();
-                await selectSuggestion(selectedIndex);
-            } else if (e.key === 'Escape') {
-                e.preventDefault();
-                hideSuggestions();
-            }
-        });
-    
-        input.addEventListener('input', updateSuggestions);
-        input.addEventListener('focus', updateSuggestions);
-        input.addEventListener('blur', () => {
-            setTimeout(() => {
-                hideSuggestions();
-            }, 150);
-        });
     };
 
     new Setting(containerEl)
-      .setName('Main folders / 主体文件夹')
-      .setDesc(
-        'Set these folders for auto-linking. When using the global trigger, search will be limited to these folders (leave empty for global search).\n设置该文件夹用于自动扫描文档进行自动连接创建。使用全局触发符时，仅在这些文件夹中搜索（留空表示全局）。'
-      )
+      .setName(i18n.mainFolders)
+      .setDesc(i18n.mainFoldersDesc)
       .addTextArea(
         text => {
             text.setValue(this.plugin.settings.mainPaths.join('\n'));
@@ -319,8 +339,8 @@ class SettingsTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName('Exclude folders / 排除文件夹')
-      .setDesc('Folders to exclude from search (one per line) / 排除搜索的文件夹（每行一个）')
+      .setName(i18n.excludeFolders)
+      .setDesc(i18n.excludeFoldersDesc)
       .addTextArea(text => {
         text.setValue(this.plugin.settings.excludeFolders.join('\n'));
         createFolderSuggest(text,
@@ -334,8 +354,8 @@ class SettingsTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-        .setName('Enable advanced URI integration / 启用高级 URI 集成')
-        .setDesc('Requires the "Advanced URI" plugin. / 需要 "Advanced URI" 插件。')
+        .setName(i18n.enableAdvancedUri)
+        .setDesc(i18n.enableAdvancedUriDesc)
         .addToggle(toggle =>
             toggle
                 .setValue(this.plugin.settings.enableAdvancedUri)
@@ -348,8 +368,8 @@ class SettingsTab extends PluginSettingTab {
 
     if (this.plugin.settings.enableAdvancedUri) {
         new Setting(containerEl)
-            .setName('UID field name / UID 字段名')
-            .setDesc('The frontmatter field name for the unique ID. / 用于高级 URI 的前置元数据字段名。')
+            .setName(i18n.uidFieldName)
+            .setDesc(i18n.uidFieldNameDesc)
             .addText(text =>
                 text
                     .setValue(this.plugin.settings.advancedUriField)
@@ -360,7 +380,7 @@ class SettingsTab extends PluginSettingTab {
             );
     }
     
-    new Setting(containerEl).setName('Custom rules / 自定义规则').setHeading();
+    new Setting(containerEl).setName(i18n.customRules).setHeading();
 
     this.plugin.settings.triggerFilterRules.forEach((rule, index) => {
         const details = containerEl.createEl('details');
@@ -373,9 +393,9 @@ class SettingsTab extends PluginSettingTab {
         const ruleContainer = details.createDiv();
 
         new Setting(ruleContainer)
-            .setName('Rule name / 规则名称')
+            .setName(i18n.ruleName)
             .addText(text => {
-                text.setPlaceholder('Rule Name')
+                text.setPlaceholder(i18n.ruleNamePlaceholder)
                     .setValue(rule.name)
                     .onChange(async (value) => {
                     rule.name = value;
@@ -385,9 +405,9 @@ class SettingsTab extends PluginSettingTab {
             });
 
         new Setting(ruleContainer)
-            .setName('Prefix / 前缀')
+            .setName(i18n.prefix)
             .addText(text => {
-                text.setPlaceholder('Prefix')
+                text.setPlaceholder(i18n.prefixPlaceholder)
                     .setValue(rule.prefix)
                     .onChange(async (value) => {
                     rule.prefix = value;
@@ -396,8 +416,8 @@ class SettingsTab extends PluginSettingTab {
             });
 
       new Setting(ruleContainer)
-        .setName('Include folders / 包含文件夹')
-        .setDesc('One folder per line / 每行一个文件夹')
+        .setName(i18n.includeFolders)
+        .setDesc(i18n.includeFoldersDesc)
         .addTextArea(text => {
           text.setValue(rule.includeFolders.join('\n'));
           createFolderSuggest(text,
@@ -411,7 +431,7 @@ class SettingsTab extends PluginSettingTab {
         });
 
       new Setting(ruleContainer)
-        .setName('Name filter regex / 文件名正则')
+        .setName(i18n.nameFilterRegex)
         .addText(text =>
           text
             .setValue(rule.nameFilterRegex)
@@ -422,8 +442,8 @@ class SettingsTab extends PluginSettingTab {
         );
       
       new Setting(ruleContainer)
-        .setName('Include tags / 包含标签')
-        .setDesc('One tag per line, without # / 每行一个标签，无需#')
+        .setName(i18n.includeTags)
+        .setDesc(i18n.includeTagsDesc)
         .addTextArea(text => {
           text.setValue(rule.includeTags.join('\n'));
           text.inputEl.addEventListener('blur', async () => {
@@ -435,7 +455,7 @@ class SettingsTab extends PluginSettingTab {
 
       new Setting(ruleContainer)
         .addButton(button => {
-          button.setButtonText('Delete rule / 删除规则')
+          button.setButtonText(i18n.deleteRule)
             .setWarning()
             .onClick(async () => {
               this.plugin.settings.triggerFilterRules.splice(index, 1);
@@ -448,7 +468,7 @@ class SettingsTab extends PluginSettingTab {
     new Setting(containerEl)
       .addButton(button =>
         button
-          .setButtonText('Add rule / 添加规则')
+          .setButtonText(i18n.addRule)
           .onClick(async () => {
             this.plugin.settings.triggerFilterRules.push({
               prefix: '',
@@ -471,11 +491,9 @@ class FileSuggest extends EditorSuggest<{ label: string; file: TFile; path: stri
   constructor(app: App, plugin: QuickLinkPlugin) {
     super(app);
     this.plugin = plugin;
-    console.log('QuickLink: FileSuggest constructor');
   }
 
   getSuggestions(context: EditorSuggestContext): { label: string; file: TFile; path: string }[] {
-    console.log('QuickLink: getSuggestions called', context.query);
     // 取出输入内容并去掉前导空白字符
     const rawQuery = context.query;
     const fullQuery = rawQuery.trimStart();
@@ -528,12 +546,10 @@ class FileSuggest extends EditorSuggest<{ label: string; file: TFile; path: stri
 
     // 限制返回数量
     const result = files.slice(0, 50).map(f => ({ label: f.basename, file: f, path: f.path }));
-    console.log('QuickLink: getSuggestions result', result);
     return result;
   }
 
   renderSuggestion(sug: { label: string; file: TFile; path: string }, el: HTMLElement): void {
-    console.log('QuickLink: renderSuggestion', sug.label);
     el.setText(sug.label);
     const parts = sug.path.split('/');
     parts.pop();
@@ -544,7 +560,6 @@ class FileSuggest extends EditorSuggest<{ label: string; file: TFile; path: stri
     sug: { label: string; file: TFile; path: string },
     evt: MouseEvent
   ): Promise<void> {
-    console.log('QuickLink: selectSuggestion', sug.label);
     if (!this.context) return;
     const { editor, start, end, file } = this.context as EditorSuggestContext;
     const alias = evt.shiftKey ? this.context.query : undefined;
@@ -553,7 +568,6 @@ class FileSuggest extends EditorSuggest<{ label: string; file: TFile; path: stri
   }
 
   onTrigger(cursor: EditorPosition, editor: Editor, file: TFile): EditorSuggestContext | null {
-    console.log('QuickLink: onTrigger called');
     if (!this.plugin.settings.isAutosuggestEnabled) return null;
     const position = editor.getCursor();
     const line = editor.getLine(position.line);
@@ -584,7 +598,6 @@ class FileSuggest extends EditorSuggest<{ label: string; file: TFile; path: stri
     const end = position;
     // 返回包含前缀或全局触发符在内的 query
     const query = line.substring(idx, position.ch);
-    console.log('QuickLink: onTrigger matched', { usedTrigger, query });
     return { editor, file, start, end, query };
   }
 }
@@ -595,19 +608,19 @@ export default class QuickLinkPlugin extends Plugin {
   suggest: FileSuggest;
 
   async onload() {
-    console.log('QuickLink: onload called');
     await this.loadSettings();
     this.addSettingTab(new SettingsTab(this.app, this));
     this.suggest = new FileSuggest(this.app, this);
-    console.log('QuickLink: FileSuggest instance created');
     this.registerEditorSuggest(this.suggest);
-    console.log('QuickLink: registerEditorSuggest called');
-    this.addRibbonIcon('link-2', 'Auto Link Scan', () => {
+    
+    const i18n = getI18nTexts(this.app);
+    
+    this.addRibbonIcon('link-2', i18n.autoLinkScan, () => {
       this.runAutoScan();
     });
     this.addCommand({
         id: 'run-auto-scan',
-        name: 'Auto link scan in current file',
+        name: i18n.autoLinkScanCurrentFile,
         checkCallback: (checking: boolean) => {
             const view = this.app.workspace.getActiveViewOfType(MarkdownView);
             if (view) {
